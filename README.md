@@ -28,6 +28,12 @@
 
 复习填空答对后进入自主造句，学习者自行选择使用场景。
 
+读界面的提示默认隐藏，悬停在例句下方的对应图标上才显示。以下展示中文翻译和场景图片的提示效果，也支持聚焦或轻点图标查看。
+
+| 读 · 悬停查看中文翻译 | 读 · 悬停查看场景图片 |
+| --- | --- |
+| [![读界面中文翻译提示：例句的中文翻译浮层](docs/screenshots/read-translation.jpg)](docs/screenshots/read-translation.jpg) | [![读界面场景图片提示：例句的 MiniMax 生成图片与说明](docs/screenshots/read-image.jpg)](docs/screenshots/read-image.jpg) |
+
 ## 工作原理
 
 - **DeepSeek**：提供词义、学习材料、英文场景、中文翻译和造句评估，也为图片编写场景提示词。
