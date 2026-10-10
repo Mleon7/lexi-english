@@ -37,7 +37,7 @@ async function harness() {
   function load(file) {
     if (cache.has(file)) return cache.get(file);
     const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-    const module = new vm.SourceTextModule(code, { context, identifier: file }); cache.set(file, module); return module;
+    const sourceModule = new vm.SourceTextModule(code, { context, identifier: file }); cache.set(file, sourceModule); return sourceModule;
   }
   const service = load(path.join(root, 'lib/server/service.ts'));
   await service.link((specifier, parent) => specifier === 'cloudflare:workers' ? envModule : specifier === './providers' ? providers : load(path.resolve(path.dirname(parent.identifier), specifier + '.ts')));

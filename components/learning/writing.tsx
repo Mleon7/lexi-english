@@ -1,0 +1,14 @@
+"use client";
+
+import { useState } from "react";
+import { ArrowRight, PenLine, RefreshCw, Sparkles } from "lucide-react";
+import { type Sense, type Feedback } from "./types";
+import { request } from "./api";
+import { Loading, FeedbackCard, TranslationHint } from "./shared";
+
+export function Writing({ sense, demo, onError, onRequireWord }: { sense: Sense; demo: boolean; onError: (e: unknown) => void; onRequireWord: () => void }) {
+  const [exercise, setExercise] = useState<{ exerciseId: string; scenario: string } | null>(null); const [answer, setAnswer] = useState(""); const [feedback, setFeedback] = useState<Feedback | null>(null); const [busy, setBusy] = useState("");
+  async function next() { if (demo) { onRequireWord(); return; } setBusy("scenario"); try { setExercise(await request("writingScenario", { senseId: sense.id })); setAnswer(""); setFeedback(null); } catch (e) { onError(e); } finally { setBusy(""); } }
+  async function submit(e: React.FormEvent) { e.preventDefault(); if (!exercise || !answer.trim()) return; setBusy("submit"); try { const result = await request<{ feedback: Feedback }>("writingSubmit", { exerciseId: exercise.exerciseId, answer }); setFeedback(result.feedback); } catch (err) { onError(err); } finally { setBusy(""); } }
+  return <section className="lesson-card practice-card"><div className="section-top"><div className="section-label"><span className="section-icon"><PenLine size={17} /></span><h2>让这个词，说你的故事</h2><span>MAKE IT YOURS</span></div></div><p className="practice-intro">在一个具体场景里，用 <strong>{sense.word}</strong> 造一个自己的句子。先表达意思，再打磨语法。</p>{!exercise ? <div className="practice-empty"><span className="large-practice-icon"><PenLine size={32} strokeWidth={1.3} /></span><h3>你的表达，从一个场景开始。</h3><p>为当前词义生成一个生活场景，<br />试着把学到的单词用进去。</p><button className="primary-button" disabled={!!busy} onClick={() => void next()}>{busy ? <Loading label="正在构思场景" /> : <><Sparkles size={16} />给我一个场景</>}</button></div> : <><div className="scenario-box"><span className="eyebrow">IMAGINE THIS</span><p>{exercise.scenario}</p><TranslationHint text={exercise.scenario} label="翻译" /></div><form onSubmit={(e) => void submit(e)}><label className="field-label" htmlFor="writing-answer">你的英文句子</label><textarea id="writing-answer" value={answer} onChange={(e) => { setAnswer(e.target.value); setFeedback(null); }} placeholder={`Use “${sense.word}” to tell your story…`} rows={5} maxLength={1200} disabled={!!busy} required /><div className="form-footer"><span>{answer.length} / 1200</span><button className="primary-button" type="submit" disabled={!!busy || !answer.trim()}>{busy === "submit" ? <Loading label="正在认真阅读" /> : <>看看我的表达 <ArrowRight size={16} /></>}</button></div></form>{feedback && <FeedbackCard feedback={feedback} />}<button className="text-button next-exercise" disabled={!!busy} onClick={() => void next()}><RefreshCw size={14} />换个场景，再练一次</button></>}</section>;
+}
