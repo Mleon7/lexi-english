@@ -8,12 +8,12 @@
 
 ### Linux / WSL2 快速启动
 
-安装 Linux 版 Node.js ≥ 22.13.0 和 npm，推荐将源码放到 `~/projects/lexi-english`，不要与 Windows 共用依赖或运行数据。将下方地址替换为实际仓库地址：
+安装 Linux 版 Node.js ≥ 22.13.0 和 npm，推荐将源码放到 `~/projects/lexi-english`，不要与 Windows 共用依赖或运行数据。执行以下命令：
 
 ```bash
 mkdir -p ~/projects
 cd ~/projects
-git clone https://github.com/<your-username>/<your-repository>.git lexi-english
+git clone https://github.com/Mleon7/lexi-english.git lexi-english
 cd lexi-english
 npm run install:ci
 cp .env.example .env  # 已有配置时不要覆盖
@@ -36,10 +36,10 @@ npm run local:stop
 
 准备 Git、Windows x64 的 Node.js 和 npm。`package.json` 要求 Node.js ≥ 22.13.0；当前本地验证版本为 25.0.0，其他版本需自行验证。
 
-在 PowerShell 中执行（将地址替换为本仓库实际地址；也可以通过 GitHub 的 **Code → Download ZIP** 下载并解压）：
+在 PowerShell 中执行（也可以通过 GitHub 的 **Code → Download ZIP** 下载并解压）：
 
 ```powershell
-git clone https://github.com/<your-username>/<your-repository>.git lexi-english
+git clone https://github.com/Mleon7/lexi-english.git lexi-english
 Set-Location .\lexi-english
 npm.cmd run install:ci
 
