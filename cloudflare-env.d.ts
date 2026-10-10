@@ -1,5 +1,6 @@
 declare namespace Cloudflare {
   interface Env {
+    ALLOWED_ORIGINS?: string;
     DB?: D1Database;
     BUCKET?: R2Bucket;
     DEEPSEEK_API_KEY?: string;

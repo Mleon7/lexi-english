@@ -72,7 +72,7 @@ export default defineConfig(async ({ command }) => {
           ...(command === "serve"
             ? {
                 vars: Object.fromEntries(
-                  ["DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "DEEPSEEK_MODEL", "MINIMAX_MODEL", "MINIMAX_IMAGE_MODEL"].flatMap((key) =>
+                  ["DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "DEEPSEEK_MODEL", "MINIMAX_MODEL", "MINIMAX_IMAGE_MODEL", "ALLOWED_ORIGINS"].flatMap((key) =>
                     process.env[key] ? [[key, process.env[key]!]] : [],
                   ),
                 ),

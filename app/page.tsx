@@ -1,16 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ArrowRight, AudioLines, BookOpen, Check, CheckCheck, ChevronRight, CircleHelp, Headphones, Image as ImageIcon, Info, Leaf, LoaderCircle, PanelLeftOpen, Mic, PanelLeftClose, PenLine, Play, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Sprout, X, Languages, Repeat2 } from "lucide-react";
-
-type Kind = "description" | "example" | "synonym" | "antonym";
-type Material = { id: string; kind: Kind; text: string; term?: string; relationNote?: string; translation?: string; scene?: { title: string; description: string; imageUrl?: string; objectKey?: string; mimeType?: string; model?: string; emoji?: string; background?: string; foreground?: string } };
-type Sense = { id: string; word: string; phonetic: string; pos: string; meaning: string; definition: string; learned: boolean; mastery: number; reviewCount: number; createdAt: number; materials: Material[] };
-type AppState = { senses: Sense[]; settings: { textModel: string; voiceModel: string }; services: { text: boolean; speech: boolean }; user: { displayName: string } };
-type Choice = Pick<Sense, "id" | "word" | "phonetic" | "pos" | "meaning" | "definition">;
-type Feedback = { appropriate: boolean; score: number; scenarioFeedback: string; grammarFeedback: string; improvedSentence: string };
-type Tab = "read" | "write" | "listen";
-type Notify = (message: string) => void;
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { ArrowRight, AudioLines, BookOpen, Check, ChevronRight, CircleHelp, Headphones, Info, Leaf, Mic, PenLine, Plus, Search, Settings2, ShieldCheck, Sparkles, Sprout, X, Repeat2 } from "lucide-react";
+import Link from "next/link";
+import { type Sense, type AppState, type Choice, type Tab } from "@/components/learning/types";
+import { ApiError, request } from "@/components/learning/api";
+import { Loading, Modal } from "@/components/learning/shared";
+import { Read } from "@/components/learning/reading";
+import { Writing } from "@/components/learning/writing";
+import { Listening } from "@/components/learning/listening";
+import { Review } from "@/components/learning/review";
 
 const DEMO: Sense = { id: "preview", word: "resilient", phonetic: "/rɪˈzɪliənt/", pos: "adjective", meaning: "有韧性的；能迅速恢复的", definition: "Able to become strong, healthy, or happy again after something difficult happens.", learned: false, mastery: 0, reviewCount: 0, createdAt: 0, materials: [
   { id: "d1", kind: "description", text: "Able to become strong, healthy, or happy again after something difficult happens." },
@@ -20,47 +19,42 @@ const DEMO: Sense = { id: "preview", word: "resilient", phonetic: "/rɪˈzɪliə
   { id: "s1", kind: "synonym", term: "strong", relationNote: "近义表达 · 强大的，坚强的", text: "She stayed strong even when things did not go as planned." },
   { id: "a1", kind: "antonym", term: "fragile", relationNote: "反义表达 · 脆弱的", text: "His confidence was fragile after a series of setbacks." },
 ] };
-const KIND_LABEL: Record<Kind, string> = { description: "英文描述", example: "例句", synonym: "近义词", antonym: "反义词" };
+
 const TABS = [{ id: "listen", title: "听", en: "LISTEN", icon: Headphones }, { id: "speak", title: "说", en: "SPEAK", icon: Mic }, { id: "read", title: "读", en: "READ", icon: BookOpen }, { id: "write", title: "写", en: "WRITE", icon: PenLine }];
-class ApiError extends Error { code: string; constructor(message: string, code: string) { super(message); this.code = code; } }
-async function request<T>(action?: string, data: Record<string, unknown> = {}): Promise<T> {
-  const response = await fetch(action ? "/api/action" : "/api/state", action ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...data }) } : undefined);
-  let result;
-  try { result = await response.json(); } catch { throw new ApiError("服务暂时没有响应，请稍后重试。", "network"); }
-  if (!response.ok) { const failure = result && typeof result === "object" ? result as Record<string, unknown> : {}; throw new ApiError(typeof failure.error === "string" ? failure.error : "操作没有完成，请重试。", response.status === 401 ? "auth" : typeof failure.code === "string" ? failure.code : "error"); }
-  return result as T;
-}
-function Loading({ label = "正在准备…" }: { label?: string }) { return <span className="inline-loading"><LoaderCircle size={16} className="spin" />{label}</span>; }
-function Highlight({ text, word }: { text: string; word: string }) {
-  if (!word) return <>{text}</>;
-  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return <>{text.split(new RegExp(`(${escaped})`, "gi")).map((part, i) => part.toLowerCase() === word.toLowerCase() ? <mark key={i}>{part}</mark> : <span key={i}>{part}</span>)}</>;
-}
-function Tip({ label, children, icon = <Info size={14} />, onReveal }: { label: string; children: ReactNode; icon?: ReactNode; onReveal?: () => void }) {
-  const [open, setOpen] = useState(false);
-  return <span className={`tip-wrap ${open ? "tip-open" : ""}`} onMouseEnter={() => { setOpen(true); onReveal?.(); }} onMouseLeave={() => setOpen(false)} onFocus={() => { setOpen(true); onReveal?.(); }} onBlur={() => setOpen(false)}><button className="hint-icon" type="button" aria-label={label} aria-expanded={open} onClick={() => { setOpen(true); onReveal?.(); }}>{icon}</button>{open && <span className="tip" role="tooltip"><span className="eyebrow">{label}</span>{children}</span>}</span>;
-}
-function Modal({ title, subtitle, children, close, wide = false }: { title: string; subtitle?: string; children: ReactNode; close: () => void; wide?: boolean }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => { const previous = document.activeElement as HTMLElement; const old = document.body.style.overflow; document.body.style.overflow = "hidden"; ref.current?.querySelector<HTMLElement>("input, button, select, textarea")?.focus(); const listener = (event: KeyboardEvent) => { if (event.key === "Escape") close(); if (event.key === "Tab") { const list = ref.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href]"); if (!list?.length) return; const first = list[0]; const last = list[list.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } }; document.addEventListener("keydown", listener); return () => { document.body.style.overflow = old; document.removeEventListener("keydown", listener); previous?.focus(); }; }, [close]);
-  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}><div className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title} ref={ref}><button className="icon-button modal-close" onClick={close} aria-label="关闭"><X size={20} /></button><div className="modal-title-icon"><Sprout size={24} /></div><h2>{title}</h2>{subtitle && <p className="muted modal-subtitle">{subtitle}</p>}{children}</div></div>;
+
+function subscribeToViewport(callback: () => void) {
+  const query = window.matchMedia("(max-width: 760px)");
+  query.addEventListener("change", callback);
+  return () => query.removeEventListener("change", callback);
 }
 
+function narrowViewport() { return window.matchMedia("(max-width: 760px)").matches; }
+
+function serverViewport() { return false; }
+
 export default function Home() {
-  const [state, setState] = useState<AppState | null>(null); const [loading, setLoading] = useState(true); const [selected, setSelected] = useState("preview"); const [tab, setTab] = useState<Tab>("read"); const [view, setView] = useState<"learn" | "review">("learn"); const [sidebar, setSidebar] = useState(true); const [sidebarWidth, setSidebarWidth] = useState(245); const [search, setSearch] = useState(""); const [add, setAdd] = useState(false); const [settings, setSettings] = useState(false); const [error, setError] = useState<{ message: string; auth?: boolean } | null>(null); const [toast, setToast] = useState("");
+  const isNarrow = useSyncExternalStore(subscribeToViewport, narrowViewport, serverViewport);
+  const [state, setState] = useState<AppState | null>(null); const [loading, setLoading] = useState(true); const [selected, setSelected] = useState("preview"); const [tab, setTab] = useState<Tab>("read"); const [view, setView] = useState<"learn" | "review">("learn"); const [sidebar, setSidebar] = useState<boolean | null>(null); const [sidebarWidth, setSidebarWidth] = useState(245); const [search, setSearch] = useState(""); const [add, setAdd] = useState(false); const [settings, setSettings] = useState(false); const [error, setError] = useState<{ message: string; auth?: boolean } | null>(null); const [toast, setToast] = useState("");
   const notify = useCallback((message: string) => setToast(message), []);
   const report = useCallback((err: unknown) => { setError({ message: err instanceof Error ? err.message : "连接暂时中断，请重试。", auth: err instanceof ApiError && err.code === "auth" }); }, []);
   const refresh = useCallback(async () => { try { const value = await request<AppState>(); setState(value); setError(null); return value; } catch (err) { report(err); } finally { setLoading(false); } }, [report]);
-  useEffect(() => { void refresh(); if (window.innerWidth <= 760) setSidebar(false); }, [refresh]);
+  useEffect(() => {
+    let active = true;
+    void request<AppState>().then(value => {
+      if (active) { setState(value); setError(null); }
+    }).catch(err => { if (active) report(err); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [report]);
   useEffect(() => { if (toast) { const id = window.setTimeout(() => setToast(""), 4000); return () => window.clearTimeout(id); } }, [toast]);
   const saved = state?.senses.filter((sense) => sense.learned) || []; const sense = saved.find((item) => item.id === selected) || saved[0] || DEMO; const isDemo = sense.id === "preview"; const words = Array.from(new Set(saved.map((item) => item.word))).filter((word) => word.toLowerCase().includes(search.toLowerCase()));
   const updateSense = (updated: Sense) => { setState((old) => old ? { ...old, senses: old.senses.some((s) => s.id === updated.id) ? old.senses.map((s) => s.id === updated.id ? updated : s) : [...old.senses, updated] } : old); };
   const addClose = useCallback(() => setAdd(false), []); const settingsClose = useCallback(() => setSettings(false), []);
-  const requireWord = () => { setAdd(true); notify("先添加一个想学的单词，开启你的学习。"); };
+  const requireWord = useCallback(() => { setAdd(true); notify("先添加一个想学的单词，开启你的学习。"); }, [notify]);
   const selectWord = (id: string) => { setSelected(id); setView("learn"); if (window.innerWidth <= 760) setSidebar(false); };
-  const sideVisible = sidebar && view === "learn";
+  const sideVisible = (sidebar ?? !isNarrow) && view === "learn";
   return <div className="app-shell">
-    <header className="topbar"><a href="/" className="brand" aria-label="词境首页"><span className="brand-icon"><BookOpen size={22} strokeWidth={1.7} /><span /></span><span>词境<span className="brand-en">Lexi</span></span></a><nav className="main-nav" aria-label="主导航"><button className={view === "learn" ? "active" : ""} onClick={() => { setView("learn"); setSidebar(true); }}><BookOpen size={16} />学习空间</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}><Repeat2 size={16} />温故知新{saved.length > 0 && <span className="nav-count">{saved.length}</span>}</button></nav><div className="topbar-end"><span className="topbar-note"><span className="status-dot" />每天一点，慢慢生长</span><button className="icon-button settings-button" onClick={() => setSettings(true)} aria-label="学习与模型设置"><Settings2 size={18} /></button><span className="avatar" aria-label="你的学习空间">{state?.user.displayName?.slice(0, 1).toUpperCase() || "L"}</span></div></header>
+    <header className="topbar"><Link href="/" className="brand" aria-label="词境首页"><span className="brand-icon"><BookOpen size={22} strokeWidth={1.7} /><span /></span><span>词境<span className="brand-en">Lexi</span></span></Link><nav className="main-nav" aria-label="主导航"><button className={view === "learn" ? "active" : ""} onClick={() => { setView("learn"); setSidebar(true); }}><BookOpen size={16} />学习空间</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}><Repeat2 size={16} />温故知新{saved.length > 0 && <span className="nav-count">{saved.length}</span>}</button></nav><div className="topbar-end"><span className="topbar-note"><span className="status-dot" />每天一点，慢慢生长</span><button className="icon-button settings-button" onClick={() => setSettings(true)} aria-label="学习与模型设置"><Settings2 size={18} /></button><span className="avatar" aria-label="你的学习空间">{state?.user.displayName?.slice(0, 1).toUpperCase() || "L"}</span></div></header>
     <div className={`workspace ${sideVisible ? "" : "sidebar-collapsed"}`} style={{ "--sidebar-width": `${sideVisible ? sidebarWidth : 0}px` } as CSSProperties}>
       {view === "learn" && <SidebarDrag open={sideVisible} width={sidebarWidth} onChange={width => { setSidebar(width > 0); if (width > 0) setSidebarWidth(width); }} />}
       {sideVisible && <aside id="word-sidebar" className="word-sidebar"><div className="sidebar-heading"><span>我的单词本 <b>{saved.length}</b></span><span className="sidebar-drag-note">拖动右边缘收放</span></div><label className="search-field"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索你的单词" aria-label="搜索单词" /><kbd>⌕</kbd></label><button className="add-word" onClick={() => setAdd(true)}><Plus size={17} />添加新单词</button><div className="sidebar-list"><div className="list-section-title">{saved.length ? "正在积累" : "从一个单词开始"}<span>{saved.length ? `${words.length} WORDS` : "YOUR COLLECTION"}</span></div>{loading ? <div className="sidebar-skeleton"><span /><span /><span /></div> : words.length ? words.map((word) => { const group = saved.filter((s) => s.word === word); const active = sense.word === word; return <div className={`word-group ${active ? "selected" : ""}`} key={word}><button className="word-item" onClick={() => selectWord(group[0].id)}><span className="word-select-dot" /><span><strong>{word}</strong><small>{group.length} 个词义 · {group[0].pos}</small></span>{active && <ChevronRight size={15} />}</button>{active && group.map((s, index) => <button className={`sense-item ${sense.id === s.id ? "active" : ""}`} key={s.id} onClick={() => selectWord(s.id)}><span>{String(index + 1).padStart(2, "0")}</span><span>{s.meaning}</span></button>)}</div>; }) : search ? <div className="sidebar-empty">没有找到“{search}”<button className="text-button" onClick={() => setAdd(true)}>添加这个单词 <Plus size={13} /></button></div> : <><button className="word-group demo-word selected" onClick={() => { setView("learn"); setTab("read"); if (window.innerWidth <= 760) setSidebar(false); }}><div className="word-item"><span className="word-select-dot" /><span><strong>resilient</strong><small>看看一个单词可以怎样学</small></span></div><span className="preview-label">示例预览 · 未保存</span></button><p className="collection-note">遇见一个新词，<br />在这里为它留个位置。</p></>}</div><div className="sidebar-bottom"><div className="seed-icon"><Sprout size={22} /></div><p>让每一个单词，<br /><strong>都有自己的故事。</strong></p><span className="sidebar-footer">词境 LEXI <span>·</span> LEARN IN CONTEXT</span></div></aside>}
@@ -86,83 +80,11 @@ export default function Home() {
   </div>;
 }
 
-function Read({ sense, demo, onUpdate, onError, notify, onRequireWord }: { sense: Sense; demo: boolean; onUpdate: (s: Sense) => void; onError: (err: unknown) => void; notify: Notify; onRequireWord: () => void }) {
-  const [busy, setBusy] = useState("");
-  async function change(action: string, extra: Record<string, unknown>, key: string) { if (demo) { onRequireWord(); return; } setBusy(key); try { const result = await request<{ sense: Sense }>(action, { senseId: sense.id, ...extra }); onUpdate(result.sense); if (action === "translate" || action === "illustrate") notify("提示已准备好，悬停或轻点句子后的图标查看"); } catch (err) { onError(err); } finally { setBusy(""); } }
-  function addButton(kind: Kind, compact = false) { return <button className={compact ? "small-add" : "text-button"} disabled={!!busy} onClick={() => void change("augment", { kind }, kind)}>{busy === kind ? <Loading label="生成中" /> : <><Plus size={14} />{compact ? `增加${KIND_LABEL[kind]}` : `再来一个${KIND_LABEL[kind]}`}</>}</button>; }
-  function tools(material: Material) { return <div className="material-tools">{material.translation ? <Tip label="中文翻译" icon={<Languages size={14} />}><span className="translation-content">{material.translation}</span></Tip> : <button className="material-action" disabled={!!busy} onClick={() => void change("translate", { materialId: material.id }, `t-${material.id}`)} aria-label={`为${KIND_LABEL[material.kind]}增加中文翻译`}>{busy === `t-${material.id}` ? <LoaderCircle size={14} className="spin" /> : <Languages size={14} />}<span>翻译</span></button>}{material.scene?.imageUrl ? <Tip label="场景图片 · MiniMax 生成" icon={<ImageIcon size={14} />}><SceneImage src={material.scene.imageUrl} alt={material.scene.description} /><strong className="scene-title">{material.scene.title}</strong><span className="scene-description">{material.scene.description}</span></Tip> : <button className="material-action" disabled={!!busy} onClick={() => void change("illustrate", { materialId: material.id }, `i-${material.id}`)} aria-label={`为${KIND_LABEL[material.kind]}增加场景图片描述`}>{busy === `i-${material.id}` ? <LoaderCircle size={14} className="spin" /> : <ImageIcon size={14} />}<span>{busy === `i-${material.id}` ? "生成中…" : "生成图片"}</span></button>}</div>; }
-  return <><section className="lesson-card definition-card"><div className="section-top"><div className="section-label"><span className="section-icon"><BookOpen size={16} /></span><h2>用英文，理解英文</h2><span>DEFINITION</span></div>{addButton("description", true)}</div>{sense.materials.filter((m) => m.kind === "description").map((material) => <div className="definition-block" key={material.id}><p className="definition-text">{material.text}</p>{tools(material)}</div>)}</section>
-    <section className="lesson-card examples-card"><div className="section-top"><div className="section-label"><span className="section-icon"><PenLine size={16} /></span><h2>放进真实的句子</h2><span>IN CONTEXT</span></div><span className="item-count">{sense.materials.filter((m) => m.kind === "example").length} 个例句</span></div><div className="example-list">{sense.materials.filter((m) => m.kind === "example").map((material, index) => <div className="example" key={material.id}><span className="example-number">{String(index + 1).padStart(2, "0")}</span><div><p className="example-text"><Highlight text={material.text} word={sense.word} /></p>{tools(material)}</div></div>)}</div><div className="card-bottom">{addButton("example")}<span>多一个语境，多一分理解</span></div></section>
-    <div className="relation-grid">{(["synonym", "antonym"] as Kind[]).map((kind) => <section className={`lesson-card relation-card ${kind}`} key={kind}><div className="section-top"><div className="section-label"><span className="relation-symbol">{kind === "synonym" ? "≈" : "↔"}</span><h2>{kind === "synonym" ? "意思相近" : "换个方向"}</h2><span>{kind === "synonym" ? "SYNONYM" : "ANTONYM"}</span></div></div>{sense.materials.filter((m) => m.kind === kind).map((m) => <div className="relation-body" key={m.id}><h3>{m.term || (kind === "synonym" ? "Related word" : "Opposite word")}</h3>{m.relationNote && <p className="relation-note">{m.relationNote}</p>}<p className="relation-example"><Highlight text={m.text} word={m.term || ""} /></p>{tools(m)}</div>)}<div className="relation-footer">{addButton(kind, true)}</div></section>)}</div>{demo && <div className="demo-bottom"><Sprout size={18} /><span>这是一个学习示例。添加你的单词，生成属于你的语境。</span><button onClick={onRequireWord}>开始积累 <ArrowRight size={14} /></button></div>}</>;
-}
-
 function AddWord({ close, onAdded, onError }: { close: () => void; onAdded: (s: Sense) => void; onError: (err: unknown) => void }) {
   const [word, setWord] = useState(""); const [choices, setChoices] = useState<Choice[]>([]); const [selected, setSelected] = useState(""); const [busy, setBusy] = useState(""); const [localError, setLocalError] = useState("");
   async function lookup(e: React.FormEvent) { e.preventDefault(); if (!word.trim()) return; setBusy("lookup"); setLocalError(""); try { const result = await request<{ senses: Choice[] }>("lookup", { word: word.trim() }); setChoices(result.senses); setSelected(result.senses[0]?.id || ""); } catch (err) { setLocalError(err instanceof Error ? err.message : "查词失败，请重试"); onError(err); } finally { setBusy(""); } }
   async function select() { if (!selected) return; setBusy("select"); setLocalError(""); try { const result = await request<{ sense: Sense }>("select", { senseId: selected }); onAdded(result.sense); } catch (err) { setLocalError(err instanceof Error ? err.message : "生成失败，请重试"); onError(err); } finally { setBusy(""); } }
   return <Modal title="今天，想认识哪个单词？" subtitle="一个词可以有很多意思。我们每次专注理解其中一个。" close={close} wide><form onSubmit={(e) => void lookup(e)}><label className="field-label" htmlFor="new-word">你的英文单词</label><div className="lookup-input"><Search size={19} /><input id="new-word" autoComplete="off" placeholder="例如：resilient" value={word} maxLength={60} onChange={(e) => { setWord(e.target.value); setChoices([]); }} disabled={!!busy} required /><button className="primary-button" type="submit" disabled={!!busy || !word.trim()}>{busy === "lookup" ? <Loading label="查找中" /> : <>查看词义 <ArrowRight size={15} /></>}</button></div></form>{localError && <p className="inline-error" role="alert">{localError}</p>}{choices.length > 0 && <div className="sense-choices"><div className="field-label">选择这次想学习的意思 <span>之后还可以添加其他词义</span></div>{choices.map((choice) => <label className={`sense-choice ${selected === choice.id ? "active" : ""}`} key={choice.id}><input type="radio" name="sense" value={choice.id} checked={selected === choice.id} onChange={() => setSelected(choice.id)} disabled={!!busy} /><span><strong><span className="pos-tag">{choice.pos}</span>{choice.meaning}</strong><em>{choice.definition}</em></span><span className="radio-indicator">{selected === choice.id && <Check size={12} />}</span></label>)}<button className="primary-button full-width" disabled={!!busy || !selected} onClick={() => void select()}>{busy === "select" ? <Loading label="正在生成学习材料，稍等片刻…" /> : <><Sparkles size={16} />生成语境，开始学习</>}</button></div>}<p className="modal-footnote"><ShieldCheck size={13} />学习记录跟随你的账号保存，随时回来继续。</p></Modal>;
-}
-
-function FeedbackCard({ feedback }: { feedback: Feedback }) { return <div className={`feedback-card ${feedback.appropriate ? "good" : "improve"}`} role="status"><div className="feedback-heading"><span>{feedback.appropriate ? <CheckCheck size={20} /> : <Sprout size={20} />}</span><h3>{feedback.appropriate ? "用得很贴切" : "再靠近这个语境一点"}</h3><b>{feedback.score}<small> / 100</small></b></div><div className="feedback-part"><span className="eyebrow">先看，是否符合语境</span><p>{feedback.scenarioFeedback}</p></div><div className="feedback-part"><span className="eyebrow">再让表达更自然</span><p>{feedback.grammarFeedback}</p></div>{feedback.improvedSentence && <div className="improved-sentence"><span>可以这样表达</span><p>{feedback.improvedSentence}</p></div>}</div>; }
-
-function Writing({ sense, demo, onError, onRequireWord }: { sense: Sense; demo: boolean; onError: (e: unknown) => void; onRequireWord: () => void }) {
-  const [exercise, setExercise] = useState<{ exerciseId: string; scenario: string } | null>(null); const [answer, setAnswer] = useState(""); const [feedback, setFeedback] = useState<Feedback | null>(null); const [busy, setBusy] = useState("");
-  async function next() { if (demo) { onRequireWord(); return; } setBusy("scenario"); try { setExercise(await request("writingScenario", { senseId: sense.id })); setAnswer(""); setFeedback(null); } catch (e) { onError(e); } finally { setBusy(""); } }
-  async function submit(e: React.FormEvent) { e.preventDefault(); if (!exercise || !answer.trim()) return; setBusy("submit"); try { const result = await request<{ feedback: Feedback }>("writingSubmit", { exerciseId: exercise.exerciseId, answer }); setFeedback(result.feedback); } catch (err) { onError(err); } finally { setBusy(""); } }
-  return <section className="lesson-card practice-card"><div className="section-top"><div className="section-label"><span className="section-icon"><PenLine size={17} /></span><h2>让这个词，说你的故事</h2><span>MAKE IT YOURS</span></div></div><p className="practice-intro">在一个具体场景里，用 <strong>{sense.word}</strong> 造一个自己的句子。先表达意思，再打磨语法。</p>{!exercise ? <div className="practice-empty"><span className="large-practice-icon"><PenLine size={32} strokeWidth={1.3} /></span><h3>你的表达，从一个场景开始。</h3><p>为当前词义生成一个生活场景，<br />试着把学到的单词用进去。</p><button className="primary-button" disabled={!!busy} onClick={() => void next()}>{busy ? <Loading label="正在构思场景" /> : <><Sparkles size={16} />给我一个场景</>}</button></div> : <><div className="scenario-box"><span className="eyebrow">IMAGINE THIS</span><p>{exercise.scenario}</p><TranslationHint text={exercise.scenario} label="翻译" /></div><form onSubmit={(e) => void submit(e)}><label className="field-label" htmlFor="writing-answer">你的英文句子</label><textarea id="writing-answer" value={answer} onChange={(e) => { setAnswer(e.target.value); setFeedback(null); }} placeholder={`Use “${sense.word}” to tell your story…`} rows={5} maxLength={1200} disabled={!!busy} required /><div className="form-footer"><span>{answer.length} / 1200</span><button className="primary-button" type="submit" disabled={!!busy || !answer.trim()}>{busy === "submit" ? <Loading label="正在认真阅读" /> : <>看看我的表达 <ArrowRight size={16} /></>}</button></div></form>{feedback && <FeedbackCard feedback={feedback} />}<button className="text-button next-exercise" disabled={!!busy} onClick={() => void next()}><RefreshCw size={14} />换个场景，再练一次</button></>}</section>;
-}
-
-type ListenSession = { sessionId: string; voices: { id: string; label: string }[]; submitted: boolean };
-function Listening({ sense, demo, onError, onRequireWord }: { sense: Sense; demo: boolean; onError: (e: unknown) => void; onRequireWord: () => void }) {
-  const items = sense.materials.filter(item => item.kind !== "description").sort((a, b) => (a.kind === "example" ? 0 : 1) - (b.kind === "example" ? 0 : 1));
-  const [materialId, setMaterialId] = useState(items[0]?.id || ""); const [session, setSession] = useState<ListenSession | null>(null); const [busy, setBusy] = useState(demo ? "" : "start"); const [startError, setStartError] = useState(""); const [answer, setAnswer] = useState(""); const [score, setScore] = useState<number | null>(null); const [hint, setHint] = useState<{ text: string; translation?: string } | null>(null); const [playing, setPlaying] = useState(""); const audioRef = useRef<HTMLAudioElement | null>(null); const hintLoading = useRef(false); const sessionVersion = useRef(0);
-  const requireWordRef = useRef(onRequireWord); requireWordRef.current = onRequireWord;
-  const reset = useCallback(() => { sessionVersion.current += 1; hintLoading.current = false; audioRef.current?.pause(); audioRef.current = null; setPlaying(""); setSession(null); setScore(null); setHint(null); setAnswer(""); }, []);
-  const start = useCallback(async () => {
-    if (demo) { requireWordRef.current(); return; }
-    if (!materialId) return;
-    reset(); const version = sessionVersion.current; setBusy("start"); setStartError("");
-    try {
-      const result = await request<ListenSession>("listeningStart", { senseId: sense.id, materialId });
-      if (version === sessionVersion.current) setSession(result);
-    } catch (error) {
-      if (version === sessionVersion.current) { setStartError(error instanceof Error ? error.message : "声音准备失败，请重试。"); onError(error); }
-    } finally { if (version === sessionVersion.current) setBusy(""); }
-  }, [demo, materialId, sense.id, reset, onError]);
-  useEffect(() => {
-    if (!demo && materialId) void start();
-    return () => { sessionVersion.current += 1; audioRef.current?.pause(); };
-  }, [demo, materialId, start]);
-  async function play(voiceId: string) { if (!session || busy) return; if (playing === voiceId) { audioRef.current?.pause(); setPlaying(""); return; } const version = sessionVersion.current; audioRef.current?.pause(); setPlaying(""); setBusy(voiceId); try { const { url } = await request<{ url: string }>("listeningAudio", { sessionId: session.sessionId, voiceId }); if (version !== sessionVersion.current) return; const audio = new Audio(url); audioRef.current = audio; audio.onended = () => { if (version === sessionVersion.current) setPlaying(""); }; audio.onerror = () => { if (version === sessionVersion.current) { setPlaying(""); onError(new Error("音频没有播放成功，请再点击一次。")); } }; await audio.play(); if (version === sessionVersion.current) setPlaying(voiceId); else audio.pause(); } catch (e) { if (version === sessionVersion.current) onError(e); } finally { if (version === sessionVersion.current) setBusy(""); } }
-  async function more() { if (!session || busy) return; const version = sessionVersion.current; setBusy("more"); try { const result = await request<{ voices: ListenSession["voices"] }>("listeningMore", { sessionId: session.sessionId }); if (version === sessionVersion.current) setSession({ ...session, voices: result.voices }); } catch (e) { if (version === sessionVersion.current) onError(e); } finally { if (version === sessionVersion.current) setBusy(""); } }
-  async function submit(e: React.FormEvent) { e.preventDefault(); if (!session || !answer.trim() || session.submitted || busy) return; const version = sessionVersion.current; setBusy("submit"); try { const result = await request<{ score: number; submitted: boolean }>("listeningSubmit", { sessionId: session.sessionId, answer }); if (version === sessionVersion.current) { setScore(result.score); setSession({ ...session, submitted: result.submitted }); } } catch (e) { if (version === sessionVersion.current) onError(e); } finally { if (version === sessionVersion.current) setBusy(""); } }
-  async function reveal() { if (!session?.submitted || hint || hintLoading.current) return; const version = sessionVersion.current; hintLoading.current = true; try { const result = await request<{ text: string; translation?: string }>("listeningHint", { sessionId: session.sessionId }); if (version === sessionVersion.current) setHint(result); } catch (e) { if (version === sessionVersion.current) onError(e); } finally { if (version === sessionVersion.current) hintLoading.current = false; } }
-  const numbers: Record<string, number> = {};
-  return <section className="lesson-card practice-card listening-card"><div className="section-top"><div className="section-label"><span className="section-icon"><Headphones size={17} /></span><h2>先听见，再写下来</h2><span>LISTEN CLOSELY</span></div></div><p className="practice-intro">已自动准备当前材料的听写。点击声音播放，先独立听写并提交，再按需查看原句。</p><label className="field-label" htmlFor="listening-material">选择听力材料</label><div className="listen-choose"><select id="listening-material" value={materialId} disabled={!!busy} onChange={(e) => { setMaterialId(e.target.value); reset(); }}>{items.map((m) => { numbers[m.kind] = (numbers[m.kind] || 0) + 1; return <option key={m.id} value={m.id}>{KIND_LABEL[m.kind]} {String(numbers[m.kind]).padStart(2, "0")}</option>; })}</select><button className="primary-button" disabled={!!busy || !materialId} onClick={() => void start()}>{busy === "start" ? <Loading label="正在准备" /> : <><Headphones size={16} />{demo ? "添加单词后练习" : session ? "重新练习" : "重试准备"}</>}</button></div>{session ? <><div className="audio-workspace"><div className={`waveform ${playing ? "playing" : ""}`} aria-hidden="true">{[18, 30, 18, 42, 52, 34, 62, 40, 26, 48, 64, 38, 25, 50, 32, 18, 40, 26, 16].map((h, i) => <i key={i} style={{ height: h, animationDelay: `${i * 0.07}s` }} />)}</div><p>{playing ? "仔细听，慢慢来。" : "选择一个声音，点击播放"}</p><div className="voices">{session.voices.map((voice, index) => <button className={`voice-button ${playing === voice.id ? "active" : ""}`} key={voice.id} onClick={() => void play(voice.id)} disabled={!!busy} aria-label={`播放声音 ${index + 1}：${voice.label}`}>{busy === voice.id ? <LoaderCircle size={18} className="spin" /> : playing === voice.id ? <AudioLines size={18} /> : <Play size={16} fill="currentColor" />}<span>声音 {String(index + 1).padStart(2, "0")}<small>{voice.label}</small></span></button>)}</div><button className="text-button" disabled={!!busy} onClick={() => void more()}>{busy === "more" ? <Loading label="增加声音" /> : <><Plus size={14} />再听一种声音</>}</button></div><form onSubmit={(e) => void submit(e)}><label className="field-label" htmlFor="dictation-answer">你听到了什么？<span>可以反复播放，凭听到的内容写下来</span></label><textarea id="dictation-answer" placeholder="Type what you hear…" value={answer} onChange={(e) => setAnswer(e.target.value)} rows={4} disabled={!!busy || session.submitted} required maxLength={1500} /><div className="form-footer"><span><ShieldCheck size={13} />原句将在提交之后解锁</span><button className="primary-button" disabled={!!busy || !answer.trim() || session.submitted} type="submit">{busy === "submit" ? <Loading label="核对中" /> : session.submitted ? <><Check size={15} />已完成听写</> : <>提交听写 <ArrowRight size={16} /></>}</button></div></form>{session.submitted && score !== null && <div className="dictation-result"><span className="result-score">{score}<small> / 100</small></span><div><strong>{score >= 90 ? "听得很仔细！" : "完成了一次认真倾听。"}</strong><p>悬停、聚焦或轻点右侧图标，对照原句再听一遍。</p></div><Tip label="原句 · 提交后解锁" onReveal={() => void reveal()}>{hint ? <><span className="original-sentence">{hint.text}</span>{hint.translation && <span className="translation-content">{hint.translation}</span>}</> : <Loading label="正在读取原句" />}</Tip></div>}</> : <div className="listening-empty"><div className="headphone-circle"><Headphones size={38} strokeWidth={1.3} /></div><h3>{demo ? "先添加一个单词，开启听写。" : busy === "start" ? "正在为你准备 3 种声音…" : startError ? "声音准备暂未完成" : "还没有可听写的材料"}</h3>{busy === "start" ? <div role="status"><Loading label="准备好后即可点击播放，无需再按开始" /></div> : <p>{demo ? "添加单词并选好词义，进入这里即可直接听写。" : startError || "请先生成这个词义的学习材料。"}</p>}<div className="three-steps"><span>01 · 点击聆听</span><ArrowRight size={12} /><span>02 · 独立听写</span><ArrowRight size={12} /><span>03 · 对照原句</span></div></div>}</section>;
-}
-
-function TranslationHint({ text, chinese, label = "Translate" }: { text: string; chinese?: string; label?: string }) {
-  return <TranslationContent key={text} text={text} chinese={chinese} label={label} />;
-}
-const practiceTranslations = new Map<string, string>();
-function TranslationContent({ text, chinese, label }: { text: string; chinese?: string; label: string }) {
-  const [translation, setTranslation] = useState(practiceTranslations.get(text) || "");
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-  async function translate() {
-    if (busy) return;
-    setBusy(true); setFailed(false);
-    try {
-      const value = chinese || (await request<{ translation: string }>("translateText", { text })).translation;
-      setTranslation(value);
-      if (practiceTranslations.size >= 200) practiceTranslations.clear();
-      practiceTranslations.set(text, value);
-    } catch { setFailed(true); } finally { setBusy(false); }
-  }
-  return <span className="practice-translation">{translation
-    ? <Tip label="Chinese translation" icon={<Languages size={14} />}><span className="translation-content">{translation}</span></Tip>
-    : <button type="button" className="material-action" disabled={busy} onClick={() => void translate()} title={failed ? "Translation failed. Click to retry." : "Prepare a Chinese translation, then hover over the icon to view it."}>{busy ? <LoaderCircle size={14} className="spin" /> : <Languages size={14} />}<span>{failed ? "Retry translation" : busy ? "Translating…" : label}</span></button>}
-  </span>;
 }
 
 function SidebarDrag({ open, width, onChange }: { open: boolean; width: number; onChange: (width: number) => void }) {
@@ -182,55 +104,8 @@ function SidebarDrag({ open, width, onChange }: { open: boolean; width: number; 
   </div>;
 }
 
-type ReviewExercise = { reviewId: string; scenario: string; sentence: string; stage: "blank" };
-type ReviewBlankResult = { correct: boolean; answer?: string; meaning?: string; feedback?: string; word?: string };
-type ReviewSentenceResult = { passed: boolean; feedback: Feedback; mastery: number };
-function Review({ count, onError, onSaved, onAdd }: { count: number; onError: (e: unknown) => void; onSaved: () => void; onAdd: () => void }) {
-  const [exercise, setExercise] = useState<ReviewExercise | null>(null);
-  const [answer, setAnswer] = useState(""); const [sentence, setSentence] = useState(""); const [busy, setBusy] = useState("");
-  const [blankResult, setBlankResult] = useState<ReviewBlankResult | null>(null);
-  const [result, setResult] = useState<ReviewSentenceResult | null>(null); const [completed, setCompleted] = useState(0);
-  async function start() { setBusy("start"); try { setExercise(await request("reviewStart")); setAnswer(""); setSentence(""); setBlankResult(null); setResult(null); } catch (e) { onError(e); } finally { setBusy(""); } }
-  async function blank(e: React.FormEvent) { e.preventDefault(); if (!exercise || !answer.trim() || busy || blankResult) return; setBusy("blank"); try { const res = await request<ReviewBlankResult>("reviewBlank", { reviewId: exercise.reviewId, answer }); setBlankResult(res); if (!res.correct) { setCompleted(n => n + 1); onSaved(); } } catch (err) { onError(err); } finally { setBusy(""); } }
-  async function write(e: React.FormEvent) { e.preventDefault(); if (!exercise || !sentence.trim() || busy || result || !blankResult?.correct) return; setBusy("sentence"); try { const res = await request<ReviewSentenceResult>("reviewSentence", { reviewId: exercise.reviewId, answer: sentence }); setResult(res); setCompleted(n => n + 1); onSaved(); } catch (err) { onError(err); } finally { setBusy(""); } }
-  const intro = count ? "Recall a word from context, then use it in a new sentence of your own. Words that need practice appear more often." : "Add a word and learn one meaning before starting your first review.";
-  const ownInstruction = "Choose your own situation and write a new sentence using this word in the meaning you just reviewed. Show that you know when to use it. Minor grammar mistakes are OK; do not copy a lesson example.";
-  return <div className="review-page" lang="en">
-    <div className="review-title"><div className="eyebrow"><span className="little-dash" />COME BACK, GROW STRONGER</div><h1>Revisit. <em>Remember.</em></h1><p>Turn familiar words into your own expressions. <TranslationHint text="Turn familiar words into your own expressions." chinese="把学过的单词变成你自己的表达。" /></p></div>
-    <div className="review-summary"><span><BookOpen size={17} /><b>{count}</b> meanings learned</span><span><CheckCheck size={17} /><b>{completed}</b> completed this round</span><span><Sprout size={17} />Better recall, less repetition</span></div>
-    {!exercise ? <section className="lesson-card review-start">
-      <div className="review-art"><span className="art-orbit" /><div className="art-card art-card-back">Aa</div><div className="art-card art-card-front"><Sprout size={32} strokeWidth={1.4} /><span>Make it stick.</span></div><span className="art-spark">✦</span></div>
-      <span className="eyebrow">A LITTLE RECALL GOES A LONG WAY</span><h2>{count ? "Can you use it again?" : "Start with your first word."}</h2><p>{intro} <TranslationHint text={intro} chinese={count ? "先根据语境填词，再自主造一个新句子。需要巩固的词会更常出现。" : "先添加一个单词并学习一个词义，再开始复习。"} /></p>
-      <button className="primary-button" onClick={() => count ? void start() : onAdd()} disabled={!!busy}>{busy ? <Loading label="Preparing review" /> : <>{count ? "Start review" : "Add a word"}<ArrowRight size={16} /></>}</button>
-      <div className="review-rules"><span><span>01</span>Recall</span><ChevronRight size={15} /><span><span>02</span>Your own sentence</span><ChevronRight size={15} /><span><span>03</span>Reflect</span></div>
-    </section> : <section className="lesson-card review-exercise">
-      <div className="review-stepper"><span className={!blankResult ? "active" : "done"}><b>{blankResult?.correct ? <Check size={12} /> : "1"}</b>Recall the word</span><span className="step-line" /><span className={blankResult?.correct ? "active" : ""}><b>2</b>Your own sentence</span></div>
-      {!blankResult?.correct ? <>
-        <h2>Which word fits this context?</h2>
-        <div className="scenario-box"><span className="eyebrow">CONTEXT</span><p>{exercise.scenario}</p><TranslationHint text={exercise.scenario} /></div>
-        <p className="cloze-sentence">{exercise.sentence.split("____").map((part, index) => <span key={index}>{index > 0 && <span className="cloze-blank">?</span>}{part}</span>)}</p><TranslationHint text={exercise.sentence} />
-        <form onSubmit={e => void blank(e)}><label className="field-label" htmlFor="review-blank">Fill in the missing word</label><div className="review-answer"><input id="review-blank" value={answer} onChange={e => setAnswer(e.target.value)} disabled={!!busy || !!blankResult} placeholder="The word is…" maxLength={100} required autoComplete="off" /><button className="primary-button" type="submit" disabled={!!busy || !answer.trim() || !!blankResult}>{busy === "blank" ? <Loading label="Checking" /> : <>Check answer <ArrowRight size={15} /></>}</button></div></form>
-        {blankResult && <div className="review-failure" role="status"><h3>Another chance to remember.</h3><p>The word is <strong>{blankResult.answer}</strong>.</p><p>{blankResult.meaning} {blankResult.meaning && <TranslationHint text={blankResult.meaning} />}</p><p>{blankResult.feedback} {blankResult.feedback && <TranslationHint text={blankResult.feedback} />}</p></div>}
-      </> : <>
-        <div className="success-note"><CheckCheck size={16} />Correct! Now choose your own context.</div><h2>Make a new sentence with <em>{blankResult.word}</em>.</h2>
-        <p className="practice-intro">{ownInstruction} <TranslationHint text={ownInstruction} chinese="请自己选择场景，使用刚复习的词义造一个全新的句子，展示你知道何时使用它。允许小的语法错误，但不要照抄例句。" /></p>
-        <form onSubmit={e => void write(e)}><label className="field-label" htmlFor="review-sentence">Your original sentence<span>Meaning and context matter most</span></label><textarea id="review-sentence" value={sentence} onChange={e => setSentence(e.target.value)} disabled={!!busy || !!result} rows={4} placeholder="Choose your own situation…" required maxLength={1200} /><div className="form-footer"><span>{sentence.length} / 1200</span><button className="primary-button" type="submit" disabled={!!busy || !sentence.trim() || !!result}>{busy === "sentence" ? <Loading label="Reading your sentence" /> : <>Finish review <Check size={16} /></>}</button></div></form>
-        {result && <><section className={`feedback-card ${result.feedback.appropriate ? "good" : "improve"}`} role="status"><div className="feedback-heading"><span><Sprout size={20} /></span><h3>{result.passed ? "A natural use of the word" : "Keep exploring its meaning"}</h3><b>{result.feedback.score}<small> / 100</small></b></div>{[{ label: "MEANING & YOUR CONTEXT", text: result.feedback.scenarioFeedback }, { label: "GRAMMAR", text: result.feedback.grammarFeedback }, { label: "A REFINED VERSION", text: result.feedback.improvedSentence }].map(part => <div className="feedback-part" key={part.label}><span className="eyebrow">{part.label}</span><p>{part.text} <TranslationHint text={part.text} /></p></div>)}</section><p className="review-outcome"><Sprout size={15} />{result.passed ? "This meaning will appear less often as your confidence grows." : "This meaning will return sooner for more practice."}</p></>}
-      </>}
-      {(result || (blankResult && !blankResult.correct)) && <button className="primary-button next-review" disabled={!!busy} onClick={() => void start()}>{busy === "start" ? <Loading label="Preparing" /> : <>Next word <ArrowRight size={15} /></>}</button>}
-    </section>}
-    <p className="review-bottom"><Info size={13} />Each meaning has its own review progress.</p>
-  </div>;
-}
-
-
 function SettingsModal({ close, state, onSaved, onError }: { close: () => void; state: AppState | null; onSaved: (v: AppState["settings"]) => void; onError: (e: unknown) => void }) {
   const [textModel, setTextModel] = useState(state?.settings.textModel || "deepseek-flash"); const [voiceModel, setVoiceModel] = useState(state?.settings.voiceModel || "speech-2.8-turbo"); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   async function save(e: React.FormEvent) { e.preventDefault(); setBusy(true); setError(""); try { const result = await request<{ settings: AppState["settings"] }>("settings", { textModel: textModel.trim(), voiceModel: voiceModel.trim() }); onSaved(result.settings); close(); } catch (err) { setError(err instanceof Error ? err.message : "设置没有保存，请重试。"); onError(err); } finally { setBusy(false); } }
   return <Modal title="按照你的节奏学习" subtitle="模型可以调整，学过的单词和语境会为你保留。" close={close}><form onSubmit={(e) => void save(e)}><div className="provider-heading"><span className="provider-icon"><Sparkles size={17} /></span><div><strong>DeepSeek</strong><span>词义、语境与学习反馈</span></div><span className={`connection-label ${state?.services.text ? "connected" : ""}`}><i />{state?.services.text ? "已配置" : "待配置"}</span></div><label className="field-label" htmlFor="text-model">文本模型</label><input id="text-model" value={textModel} onChange={(e) => setTextModel(e.target.value)} required maxLength={100} disabled={busy} /><div className="provider-heading"><span className="provider-icon"><AudioLines size={18} /></span><div><strong>MiniMax</strong><span>多种声音，真实聆听</span></div><span className={`connection-label ${state?.services.speech ? "connected" : ""}`}><i />{state?.services.speech ? "已配置" : "待配置"}</span></div><label className="field-label" htmlFor="voice-model">语音模型</label><input id="voice-model" value={voiceModel} onChange={(e) => setVoiceModel(e.target.value)} required maxLength={100} disabled={busy} /><p className="settings-help"><ShieldCheck size={15} />API 密钥仅保存在服务端。这里仅调整模型名称；服务提供商由站点配置管理。</p>{error && <p className="inline-error" role="alert">{error}</p>}<button className="primary-button full-width" type="submit" disabled={busy || !textModel.trim() || !voiceModel.trim()}>{busy ? <Loading label="保存中" /> : <>保存设置 <Check size={15} /></>}</button></form></Modal>;
-}
-
-function SceneImage({ src, alt }: { src: string; alt: string }) {
-  const [failed, setFailed] = useState(false);
-  return failed ? <span className="scene-image-error">图片暂时未能加载，请移开后再次悬停重试。</span> : <img className="scene-generated-image" src={src} alt={alt} width={320} height={240} onError={() => setFailed(true)} />;
 }
