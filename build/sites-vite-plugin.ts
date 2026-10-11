@@ -29,7 +29,16 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-export function sites({ mockAuth = true } = {}): Plugin {
+export function sites({ mockAuth = true, tailscaleOrigin = "", tailscaleLogin = "" } = {}): Plugin {
+  let tailscale: URL | undefined;
+  if (tailscaleOrigin || tailscaleLogin) {
+    tailscale = new URL(tailscaleOrigin);
+    if (
+      !tailscaleLogin.trim() || tailscaleLogin !== tailscaleLogin.trim() ||
+      tailscale.protocol !== "https:" || !tailscale.hostname.endsWith(".ts.net") ||
+      tailscale.hostname.includes("*") || tailscale.origin !== tailscaleOrigin
+    ) throw new Error("Set TAILSCALE_ORIGIN to an exact https://device.tailnet.ts.net origin and TAILSCALE_LOGIN to your login name.");
+  }
   let root = process.cwd();
   let command: "build" | "serve" = "build";
 
@@ -53,9 +62,20 @@ export function sites({ mockAuth = true } = {}): Plugin {
 
         let authority: URL;
         let url: URL;
+        const tailscaleHost = Boolean(tailscale && request.headers.host === tailscale.host);
+        // Serve supplies identity headers and removes client-supplied copies.
+        // Trust them only via a loopback connection to the configured hostname.
+        // Never expose this backend directly on LAN/Tailscale interfaces.
+        if (tailscaleHost && (
+          !localAddresses.has(request.socket.remoteAddress ?? "") ||
+          request.headers["tailscale-user-login"] !== tailscaleLogin
+        )) {
+          respond(response, 403);
+          return;
+        }
         try {
           authority = new URL(
-            `${secure ? "https" : "http"}://${request.headers.host}`,
+            `${secure || tailscaleHost ? "https" : "http"}://${request.headers.host}`,
           );
           url = new URL(request.url ?? "/", authority);
         } catch {
@@ -71,7 +91,7 @@ export function sites({ mockAuth = true } = {}): Plugin {
           .replace(/^\[|\]$/g, "")
           .toLowerCase();
         if (
-          !localHosts.has(hostname) ||
+          (!localHosts.has(hostname) && !tailscaleHost) ||
           !localAddresses.has(request.socket.remoteAddress ?? "") ||
           url.origin !== authority.origin
         ) {
@@ -165,7 +185,7 @@ export function sites({ mockAuth = true } = {}): Plugin {
           "Set-Cookie",
           `${localCookieName}=${signIn ? "1" : ""}; Path=/; ${
             signOut ? "Max-Age=0; " : ""
-          }HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`,
+          }HttpOnly; SameSite=Lax${secure || tailscaleHost ? "; Secure" : ""}`,
         );
         response.end();
       });
