@@ -60,3 +60,6 @@ next-env.d.ts
 *.log
 Thumbs.db
 Desktop.ini
+
+# Personal remote access instructions
+/本地访问说明.local.md

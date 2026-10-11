@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
-import { ArrowRight, AudioLines, BookOpen, Check, ChevronRight, CircleHelp, Headphones, Info, Leaf, Mic, PenLine, Plus, Search, Settings2, ShieldCheck, Sparkles, Sprout, X, Repeat2 } from "lucide-react";
+import { ArrowRight, AudioLines, BookOpen, Check, ChevronRight, CircleHelp, Headphones, Info, Leaf, Mic, MoveHorizontal, PenLine, Plus, Search, Settings2, ShieldCheck, Sparkles, Sprout, X, Repeat2 } from "lucide-react";
 import Link from "next/link";
 import { type Sense, type AppState, type Choice, type Tab } from "@/components/learning/types";
 import { ApiError, request } from "@/components/learning/api";
@@ -21,6 +21,8 @@ const DEMO: Sense = { id: "preview", word: "resilient", phonetic: "/rɪˈzɪliə
 ] };
 
 const TABS = [{ id: "listen", title: "听", en: "LISTEN", icon: Headphones }, { id: "speak", title: "说", en: "SPEAK", icon: Mic }, { id: "read", title: "读", en: "READ", icon: BookOpen }, { id: "write", title: "写", en: "WRITE", icon: PenLine }];
+const DEFAULT_SIDEBAR_WIDTH = 245;
+const SIDEBAR_DRAG_THRESHOLD = 5;
 
 function subscribeToViewport(callback: () => void) {
   const query = window.matchMedia("(max-width: 760px)");
@@ -34,7 +36,7 @@ function serverViewport() { return false; }
 
 export default function Home() {
   const isNarrow = useSyncExternalStore(subscribeToViewport, narrowViewport, serverViewport);
-  const [state, setState] = useState<AppState | null>(null); const [loading, setLoading] = useState(true); const [selected, setSelected] = useState("preview"); const [tab, setTab] = useState<Tab>("read"); const [view, setView] = useState<"learn" | "review">("learn"); const [sidebar, setSidebar] = useState<boolean | null>(null); const [sidebarWidth, setSidebarWidth] = useState(245); const [search, setSearch] = useState(""); const [add, setAdd] = useState(false); const [settings, setSettings] = useState(false); const [error, setError] = useState<{ message: string; auth?: boolean } | null>(null); const [toast, setToast] = useState("");
+  const [state, setState] = useState<AppState | null>(null); const [loading, setLoading] = useState(true); const [selected, setSelected] = useState("preview"); const [tab, setTab] = useState<Tab>("read"); const [view, setView] = useState<"learn" | "review">("learn"); const [sidebar, setSidebar] = useState<boolean | null>(null); const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH); const [search, setSearch] = useState(""); const [add, setAdd] = useState(false); const [settings, setSettings] = useState(false); const [error, setError] = useState<{ message: string; auth?: boolean } | null>(null); const [toast, setToast] = useState("");
   const notify = useCallback((message: string) => setToast(message), []);
   const report = useCallback((err: unknown) => { setError({ message: err instanceof Error ? err.message : "连接暂时中断，请重试。", auth: err instanceof ApiError && err.code === "auth" }); }, []);
   const refresh = useCallback(async () => { try { const value = await request<AppState>(); setState(value); setError(null); return value; } catch (err) { report(err); } finally { setLoading(false); } }, [report]);
@@ -57,9 +59,9 @@ export default function Home() {
     <header className="topbar"><Link href="/" className="brand" aria-label="词境首页"><span className="brand-icon"><BookOpen size={22} strokeWidth={1.7} /><span /></span><span>词境<span className="brand-en">Lexi</span></span></Link><nav className="main-nav" aria-label="主导航"><button className={view === "learn" ? "active" : ""} onClick={() => { setView("learn"); setSidebar(true); }}><BookOpen size={16} />学习空间</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}><Repeat2 size={16} />温故知新{saved.length > 0 && <span className="nav-count">{saved.length}</span>}</button></nav><div className="topbar-end"><span className="topbar-note"><span className="status-dot" />每天一点，慢慢生长</span><button className="icon-button settings-button" onClick={() => setSettings(true)} aria-label="学习与模型设置"><Settings2 size={18} /></button><span className="avatar" aria-label="你的学习空间">{state?.user.displayName?.slice(0, 1).toUpperCase() || "L"}</span></div></header>
     <div className={`workspace ${sideVisible ? "" : "sidebar-collapsed"}`} style={{ "--sidebar-width": `${sideVisible ? sidebarWidth : 0}px` } as CSSProperties}>
       {view === "learn" && <SidebarDrag open={sideVisible} width={sidebarWidth} onChange={width => { setSidebar(width > 0); if (width > 0) setSidebarWidth(width); }} />}
-      {sideVisible && <aside id="word-sidebar" className="word-sidebar"><div className="sidebar-heading"><span>我的单词本 <b>{saved.length}</b></span><span className="sidebar-drag-note">拖动右边缘收放</span></div><label className="search-field"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索你的单词" aria-label="搜索单词" /><kbd>⌕</kbd></label><button className="add-word" onClick={() => setAdd(true)}><Plus size={17} />添加新单词</button><div className="sidebar-list"><div className="list-section-title">{saved.length ? "正在积累" : "从一个单词开始"}<span>{saved.length ? `${words.length} WORDS` : "YOUR COLLECTION"}</span></div>{loading ? <div className="sidebar-skeleton"><span /><span /><span /></div> : words.length ? words.map((word) => { const group = saved.filter((s) => s.word === word); const active = sense.word === word; return <div className={`word-group ${active ? "selected" : ""}`} key={word}><button className="word-item" onClick={() => selectWord(group[0].id)}><span className="word-select-dot" /><span><strong>{word}</strong><small>{group.length} 个词义 · {group[0].pos}</small></span>{active && <ChevronRight size={15} />}</button>{active && group.map((s, index) => <button className={`sense-item ${sense.id === s.id ? "active" : ""}`} key={s.id} onClick={() => selectWord(s.id)}><span>{String(index + 1).padStart(2, "0")}</span><span>{s.meaning}</span></button>)}</div>; }) : search ? <div className="sidebar-empty">没有找到“{search}”<button className="text-button" onClick={() => setAdd(true)}>添加这个单词 <Plus size={13} /></button></div> : <><button className="word-group demo-word selected" onClick={() => { setView("learn"); setTab("read"); if (window.innerWidth <= 760) setSidebar(false); }}><div className="word-item"><span className="word-select-dot" /><span><strong>resilient</strong><small>看看一个单词可以怎样学</small></span></div><span className="preview-label">示例预览 · 未保存</span></button><p className="collection-note">遇见一个新词，<br />在这里为它留个位置。</p></>}</div><div className="sidebar-bottom"><div className="seed-icon"><Sprout size={22} /></div><p>让每一个单词，<br /><strong>都有自己的故事。</strong></p><span className="sidebar-footer">词境 LEXI <span>·</span> LEARN IN CONTEXT</span></div></aside>}
+      {sideVisible && <aside id="word-sidebar" className="word-sidebar"><div className="sidebar-heading"><span>我的单词本 <b>{saved.length}</b></span><span className="sidebar-drag-note">点击收放 · 拖动调宽</span></div><label className="search-field"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索你的单词" aria-label="搜索单词" /><kbd>⌕</kbd></label><button className="add-word" onClick={() => setAdd(true)}><Plus size={17} />添加新单词</button><div className="sidebar-list"><div className="list-section-title">{saved.length ? "正在积累" : "从一个单词开始"}<span>{saved.length ? `${words.length} WORDS` : "YOUR COLLECTION"}</span></div>{loading ? <div className="sidebar-skeleton"><span /><span /><span /></div> : words.length ? words.map((word) => { const group = saved.filter((s) => s.word === word); const active = sense.word === word; return <div className={`word-group ${active ? "selected" : ""}`} key={word}><button className="word-item" onClick={() => selectWord(group[0].id)}><span className="word-select-dot" /><span><strong>{word}</strong><small>{group.length} 个词义 · {group[0].pos}</small></span>{active && <ChevronRight size={15} />}</button>{active && group.map((s, index) => <button className={`sense-item ${sense.id === s.id ? "active" : ""}`} key={s.id} onClick={() => selectWord(s.id)}><span>{String(index + 1).padStart(2, "0")}</span><span>{s.meaning}</span></button>)}</div>; }) : search ? <div className="sidebar-empty">没有找到“{search}”<button className="text-button" onClick={() => setAdd(true)}>添加这个单词 <Plus size={13} /></button></div> : <><button className="word-group demo-word selected" onClick={() => { setView("learn"); setTab("read"); if (window.innerWidth <= 760) setSidebar(false); }}><div className="word-item"><span className="word-select-dot" /><span><strong>resilient</strong><small>看看一个单词可以怎样学</small></span></div><span className="preview-label">示例预览 · 未保存</span></button><p className="collection-note">遇见一个新词，<br />在这里为它留个位置。</p></>}</div><div className="sidebar-bottom"><div className="seed-icon"><Sprout size={22} /></div><p>让每一个单词，<br /><strong>都有自己的故事。</strong></p><span className="sidebar-footer">词境 LEXI <span>·</span> LEARN IN CONTEXT</span></div></aside>}
       <main className="main-content">
-        <div className="page-breadcrumb"><div>{!sideVisible && view === "learn" && <span className="sidebar-drag-note">向右拖动左边缘，展开单词栏</span>}<span>{view === "learn" ? "学习空间" : "温故知新"}</span><ChevronRight size={13} /><span className="breadcrumb-current">{view === "learn" ? "在语境中认识单词" : "把遇见，变成熟悉"}</span></div><span className="quiet-label"><span className="tiny-leaf">✦</span> A LITTLE EVERY DAY</span></div>
+        <div className="page-breadcrumb"><div>{!sideVisible && view === "learn" && <span className="sidebar-drag-note">点击左侧手柄或向右拖动，展开单词栏</span>}<span>{view === "learn" ? "学习空间" : "温故知新"}</span><ChevronRight size={13} /><span className="breadcrumb-current">{view === "learn" ? "在语境中认识单词" : "把遇见，变成熟悉"}</span></div><span className="quiet-label"><span className="tiny-leaf">✦</span> A LITTLE EVERY DAY</span></div>
         {error && <div className="error-banner" role="alert"><CircleHelp size={18} /><span>{error.message}</span>{error.auth ? <a href="/signin-with-chatgpt?return_to=/" target="_top">登录并同步</a> : <button onClick={() => void refresh()}>重新连接</button>}<button className="icon-button" onClick={() => setError(null)} aria-label="关闭提示"><X size={15} /></button></div>}
         {loading ? <div className="content-skeleton" aria-label="正在读取学习记录"><div /><div /><div /></div> : view === "review" ? <Review count={saved.length} onError={report} onSaved={() => void refresh()} onAdd={() => setAdd(true)} /> : <>
           <section className="word-header"><div><div className="eyebrow word-eyebrow"><span className="little-dash" />{isDemo ? "A WORD TO BEGIN WITH" : "YOUR WORD, YOUR WORLD"}{isDemo && <span className="demo-tag">示例预览</span>}</div><div className="word-title-row"><h1>{sense.word}</h1><span className="word-pronunciation">{sense.phonetic}</span></div><div className="word-meaning"><span className="pos-tag">{sense.pos}</span><span>{sense.meaning}</span></div></div><div className="word-header-note"><div className="leaf-decoration"><Leaf size={38} strokeWidth={1} /><span /><Leaf size={24} strokeWidth={1} /></div><span>不只记住单词，<br />更懂得如何使用。</span></div></section>
@@ -88,19 +90,59 @@ function AddWord({ close, onAdded, onError }: { close: () => void; onAdded: (s: 
 }
 
 function SidebarDrag({ open, width, onChange }: { open: boolean; width: number; onChange: (width: number) => void }) {
-  const drag = useRef<{ x: number; width: number; pointerId: number } | null>(null);
+  const drag = useRef<{ x: number; y: number; width: number; pointerId: number; moved: boolean } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const toggle = () => onChange(open ? 0 : DEFAULT_SIDEBAR_WIDTH);
+  const cancelDrag = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    setDragging(false);
+  };
   return <div className={`sidebar-drag ${open ? "is-open" : "is-closed"} ${dragging ? "is-dragging" : ""}`}
-    role="separator" tabIndex={0} aria-label={open ? "拖动调整单词栏，向左拖到底收起" : "向右拖动展开单词栏"}
+    role="separator" tabIndex={0} aria-label={open ? "点击收起单词栏，拖动调整宽度" : "点击或向右拖动展开单词栏"}
     aria-orientation="vertical" aria-valuemin={0} aria-valuemax={360} aria-valuenow={open ? width : 0} aria-controls="word-sidebar"
-    title={open ? "左右拖动调节宽度 · 向左拖到底收起" : "向右拖动展开单词栏"}
-    onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); drag.current = { x: event.clientX, width: open ? width : 0, pointerId: event.pointerId }; setDragging(true); }}
-    onPointerMove={event => { const current = drag.current; if (!current || current.pointerId !== event.pointerId) return; const next = Math.max(0, Math.min(360, window.innerWidth - 40, current.width + event.clientX - current.x)); onChange(next < (current.width ? 120 : 45) ? 0 : Math.max(200, next)); }}
-    onPointerUp={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); drag.current = null; setDragging(false); }}
-    onPointerCancel={() => { drag.current = null; setDragging(false); }}
-    onLostPointerCapture={() => { drag.current = null; setDragging(false); }}
-    onKeyDown={event => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); if (event.key === "Home") onChange(0); else if (event.key === "End") onChange(300); else if (event.key === "ArrowRight") onChange(open ? Math.min(360, width + 20) : 245); else onChange(!open || width <= 200 ? 0 : width - 20); }}>
-    <span className="sidebar-drag-grip"><span>⋮</span><small>{open ? "拖动收放" : "拖动展开"}</small><ChevronRight size={13} /></span>
+    title={open ? "点击收起 · 左右拖动调节宽度 · 向左拖到底收起" : "点击按默认宽度展开 · 向右拖动展开"}
+    onPointerDown={event => {
+      if (event.button !== 0 || !event.isPrimary || drag.current) return;
+      event.preventDefault();
+      event.currentTarget.focus({ preventScroll: true });
+      event.currentTarget.setPointerCapture(event.pointerId);
+      drag.current = { x: event.clientX, y: event.clientY, width: open ? width : 0, pointerId: event.pointerId, moved: false };
+    }}
+    onPointerMove={event => {
+      const current = drag.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      if (!current.moved) {
+        if (Math.hypot(event.clientX - current.x, event.clientY - current.y) <= SIDEBAR_DRAG_THRESHOLD) return;
+        current.moved = true;
+        setDragging(true);
+      }
+      const next = Math.max(0, Math.min(360, window.innerWidth - 40, current.width + event.clientX - current.x));
+      onChange(next < (current.width ? 120 : 45) ? 0 : Math.max(200, next));
+    }}
+    onPointerUp={event => {
+      const current = drag.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      drag.current = null;
+      setDragging(false);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      if (!current.moved) toggle();
+    }}
+    onPointerCancel={cancelDrag}
+    onLostPointerCapture={cancelDrag}
+    // Pointer activation is handled on release, including taps without a click event.
+    // Keep non-pointer activation available without toggling again after a drag.
+    onClick={event => { if (event.detail === 0) toggle(); }}
+    onKeyDown={event => {
+      if (!["Enter", " ", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === "Enter" || event.key === " ") { if (!event.repeat) toggle(); }
+      else if (event.key === "Home") onChange(0);
+      else if (event.key === "End") onChange(300);
+      else if (event.key === "ArrowRight") onChange(open ? Math.min(360, width + 20) : DEFAULT_SIDEBAR_WIDTH);
+      else onChange(!open || width <= 200 ? 0 : width - 20);
+    }}>
+    <span className="sidebar-drag-grip" aria-hidden="true">{open ? <MoveHorizontal size={14} strokeWidth={1.7} /> : <ChevronRight size={15} strokeWidth={1.7} />}</span>
   </div>;
 }
 

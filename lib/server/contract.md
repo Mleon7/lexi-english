@@ -13,7 +13,7 @@ Actions and results:
 - `illustrate {senseId,materialId}` -> `{sense}`; add truthful text-model scene illustration data (not generated photo), UI conceals until hover/focus.
 - `writingScenario {senseId}` -> `{exerciseId,scenario}` (Chinese scenario).
 - `writingSubmit {exerciseId,answer}` -> `{feedback:{appropriate:boolean,score:number,scenarioFeedback:string,grammarFeedback:string,improvedSentence:string}}`.
-- `listeningStart {senseId,materialId}` -> `{sessionId,voices:[{id,label}],submitted:false}`. The response has NO original sentence. At least 3 distinct English voices selected on server.
+- `listeningStart {senseId,materialId}` -> `{sessionId,voices:[{id,label}],submitted:false}`. Starts a fresh attempt while retaining all available voices previously saved for this user's material and text, including added voices. The response has NO original sentence. At least 3 distinct English voices selected on server.
 - `listeningMore {sessionId}` -> `{voices:[{id,label}]}` (full list).
 - `listeningAudio {sessionId,voiceId}` -> `{url}`. URL points to authenticated `/api/audio?id=...`. Cache in R2. Voice ids selected server-side.
 - `listeningSubmit {sessionId,answer}` -> `{score:number,submitted:true}`. Nonempty attempt required; original is only retrieved afterward.

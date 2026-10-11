@@ -87,3 +87,47 @@ test('listening rejects descriptions, allows example sentences, and keeps answer
     }
   } finally { h.db.close(); }
 });
+
+test('listening preserves added voices and their order across refreshes and fresh attempts', async () => {
+  const h = await harness();
+  try {
+    const start = () => h.action({ action: 'listeningStart', senseId: 'sense-a', materialId: 'example' });
+    const first = await start();
+    const added = await h.action({ action: 'listeningMore', sessionId: first.sessionId });
+    assert.equal(added.voices.length, 4);
+    assert.equal(JSON.stringify(added.voices.slice(0, 3)), JSON.stringify(first.voices));
+    const refreshed = await start();
+    assert.notEqual(refreshed.sessionId, first.sessionId);
+    assert.equal(JSON.stringify(refreshed.voices), JSON.stringify(added.voices));
+    await h.action({ action: 'listeningSubmit', sessionId: refreshed.sessionId, answer: 'She was meticulous about her desk.' });
+    const restarted = await start();
+    assert.equal(JSON.stringify(restarted.voices), JSON.stringify(added.voices));
+    assert.equal(restarted.submitted, false);
+    assert.equal(restarted.text, undefined);
+    assert.equal(restarted.answer, undefined);
+    await assert.rejects(h.action({ action: 'listeningHint', sessionId: restarted.sessionId }), e => e.code === 'DICTATION_REQUIRED');
+    await assert.rejects(h.action({ action: 'listeningMore', sessionId: restarted.sessionId }), e => e.code === 'ALL_VOICES_ADDED');
+    const differentMaterial = await h.action({ action: 'listeningStart', senseId: 'sense-a', materialId: 'synonym' });
+    assert.equal(differentMaterial.voices.length, 3);
+    assert.equal(JSON.stringify((await start()).voices), JSON.stringify(added.voices));
+  } finally { h.db.close(); }
+});
+
+test('listening recovers voices from older attempts and isolates user, sense, material, and text', async () => {
+  const h = await harness();
+  try {
+    const seed = h.db.prepare('INSERT INTO exercises(id,user_id,sense_id,kind,stage,data,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)');
+    const savedVoices = [{ id: 'c', label: 'C' }, { id: 'a', label: 'A' }, { id: 'b', label: 'B' }];
+    const stored = { materialId: 'example', text: 'She was meticulous about her desk.', voices: savedVoices };
+    seed.run('older', 'tester', 'sense-a', 'listening', 'listening', JSON.stringify(stored), 1, 1);
+    seed.run('latest', 'tester', 'sense-a', 'listening', 'listening', JSON.stringify({ ...stored, voices: savedVoices.slice(0, 2) }), 2, 2);
+    const extra = { ...stored, voices: [{ id: 'd', label: 'D' }] };
+    seed.run('other-user', 'someone-else', 'sense-a', 'listening', 'listening', JSON.stringify(extra), 3, 3);
+    seed.run('other-sense', 'tester', 'sense-b', 'listening', 'listening', JSON.stringify(extra), 4, 4);
+    seed.run('other-material', 'tester', 'sense-a', 'listening', 'listening', JSON.stringify({ ...extra, materialId: 'synonym' }), 5, 5);
+    seed.run('other-text', 'tester', 'sense-a', 'listening', 'listening', JSON.stringify({ ...extra, text: 'An older sentence.' }), 6, 6);
+    seed.run('other-kind', 'tester', 'sense-a', 'writing', 'writing', JSON.stringify(extra), 7, 7);
+    const session = await h.action({ action: 'listeningStart', senseId: 'sense-a', materialId: 'example' });
+    assert.deepEqual(JSON.parse(JSON.stringify(session.voices)), savedVoices);
+  } finally { h.db.close(); }
+});

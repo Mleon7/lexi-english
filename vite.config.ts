@@ -53,6 +53,9 @@ export default defineConfig(async ({ command }) => {
 
   return {
     server: {
+      ...(process.env.TAILSCALE_ORIGIN && !managedLinux
+        ? { allowedHosts: [new URL(process.env.TAILSCALE_ORIGIN).hostname] }
+        : {}),
       ...(managedLinux
         ? { host: "0.0.0.0", allowedHosts: ["terminal.local"] }
         : {}),
@@ -62,7 +65,13 @@ export default defineConfig(async ({ command }) => {
     },
     plugins: [
       vinext(),
-      sites({ mockAuth: !managedLinux }),
+      sites({
+        mockAuth: !managedLinux,
+        ...(!managedLinux ? {
+          tailscaleOrigin: process.env.TAILSCALE_ORIGIN,
+          tailscaleLogin: process.env.TAILSCALE_LOGIN,
+        } : {}),
+      }),
       connectorPreview(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },

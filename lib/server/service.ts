@@ -93,7 +93,18 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
     if (name === "illustrate") return illustrate(userId, sense, item.id, config);
     if (name === "listeningStart") {
       if (item.kind === "description") throw new AppError("听写只提供例句，请选择一个例句。", 400, "EXAMPLE_REQUIRED");
-      const voices = shuffled(VOICES).slice(0, 3);
+      // A refresh starts a fresh attempt, but voices belong to the material.
+      // Include older attempts too so voices added before a refresh are recovered.
+      const history = await database().prepare("SELECT json_extract(data,'$.voices') AS voices FROM exercises WHERE user_id=? AND sense_id=? AND kind='listening' AND json_extract(data,'$.materialId')=? AND json_extract(data,'$.text')=? ORDER BY created_at,rowid").bind(userId, sense.id, item.id, item.text).all<{ voices: string }>();
+      const saved = new Map<string, (typeof VOICES)[number]>();
+      for (const previous of history.results) {
+        for (const voice of JSON.parse(previous.voices) as typeof VOICES) {
+          const available = VOICES.find(candidate => candidate.id === voice.id);
+          if (available && !saved.has(available.id)) saved.set(available.id, available);
+        }
+      }
+      const voices = [...saved.values()];
+      if (voices.length < 3) voices.push(...shuffled(VOICES.filter(voice => !saved.has(voice.id))).slice(0, 3 - voices.length));
       const sessionId = await createExercise(userId, sense.id, "listening", "listening", { materialId: item.id, text: item.text, translation: item.translation, voices });
       return { sessionId, voices, submitted: false };
     }
