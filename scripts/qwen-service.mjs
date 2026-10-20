@@ -17,8 +17,10 @@ export function qwenLaunchConfig(env, root, platform = process.platform) {
   if (!['bfloat16', 'bf16', 'float16', 'fp16', 'float32', 'fp32'].includes(dtype)) throw new Error('QWEN_TTS_DTYPE 必须是 bfloat16、float16 或 float32。');
   const offline = env.QWEN_TTS_OFFLINE || '1';
   if (!['0', '1'].includes(offline)) throw new Error('QWEN_TTS_OFFLINE 必须是 1（使用缓存）或 0（允许下载）。');
-  const cwd = env.QWEN_TTS_DIR ? path.resolve(root, env.QWEN_TTS_DIR) : null;
-  const python = cwd ? path.join(cwd, '.venv', platform === 'win32' ? 'Scripts/python.exe' : 'bin/python') : null;
+  // Paths follow `platform`, not the host, so either platform can be checked anywhere.
+  const paths = platform === 'win32' ? path.win32 : path.posix;
+  const cwd = env.QWEN_TTS_DIR ? paths.resolve(root, env.QWEN_TTS_DIR) : null;
+  const python = cwd ? paths.join(cwd, '.venv', platform === 'win32' ? 'Scripts/python.exe' : 'bin/python') : null;
   return {
     url, cwd, python, timeoutMs: timeoutSeconds * 1000,
     model: env.QWEN_TTS_MODEL || 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
@@ -26,9 +28,9 @@ export function qwenLaunchConfig(env, root, platform = process.platform) {
     env: {
       ...env, PYTHONUNBUFFERED: '1', HF_HUB_OFFLINE: offline,
       ...(cwd ? {
-        VIRTUAL_ENV: path.join(cwd, '.venv'),
-        PATH: path.dirname(python) + path.delimiter + (env.PATH || ''),
-        HF_HOME: env.QWEN_TTS_HF_HOME || path.join(cwd, 'models', 'huggingface'),
+        VIRTUAL_ENV: paths.join(cwd, '.venv'),
+        PATH: paths.dirname(python) + paths.delimiter + (env.PATH || ''),
+        HF_HOME: env.QWEN_TTS_HF_HOME || paths.join(cwd, 'models', 'huggingface'),
       } : {}),
     },
   };

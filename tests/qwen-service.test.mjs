@@ -44,7 +44,9 @@ test('Qwen launch configuration uses the selected virtualenv, model cache and pl
   assert.equal(qwenLaunchConfig({ QWEN_TTS_OFFLINE: '0' }, '/tmp').env.HF_HUB_OFFLINE, '0');
   assert.equal(cfg.timeoutMs, 90000);
   assert.equal(cfg.url.port, '8123');
-  assert.equal(qwenLaunchConfig({ QWEN_TTS_DIR: '.' }, '/tmp', 'win32').python, path.join('/tmp', '.venv', 'Scripts/python.exe'));
+  const win = qwenLaunchConfig({ QWEN_TTS_DIR: '.', PATH: 'C:\\Windows' }, 'C:\\lexi', 'win32');
+  assert.equal(win.python, 'C:\\lexi\\.venv\\Scripts\\python.exe');
+  assert.equal(win.env.PATH, 'C:\\lexi\\.venv\\Scripts;C:\\Windows');
   assert.throws(() => qwenLaunchConfig({ QWEN_TTS_START_TIMEOUT: '0' }, '/tmp'), /TIMEOUT/);
   assert.throws(() => qwenLaunchConfig({ QWEN_TTS_URL: 'http://user:secret@localhost:8000' }, '/tmp'), /URL/);
 });
