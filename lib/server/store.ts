@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { AppError, type Sense, type Settings } from "./core";
+import { speechConfiguration } from "./speech-config";
 
 export function database(): D1Database {
   if (!env.DB) throw new AppError("学习数据库尚未就绪，请稍后重试。", 503, "STORAGE_UNAVAILABLE");
@@ -25,7 +26,8 @@ export async function listSenses(userId: string, learnedOnly = true): Promise<Se
 }
 export async function settings(userId: string): Promise<Settings> {
   const row = await database().prepare("SELECT text_model, voice_model FROM user_settings WHERE user_id = ?").bind(userId).first<{ text_model: string; voice_model: string }>();
-  return { textModel: row?.text_model || env.DEEPSEEK_MODEL || "deepseek-flash", voiceModel: row?.voice_model || env.MINIMAX_MODEL || "speech-2.8-turbo" };
+  const speech = speechConfiguration();
+  return { textModel: row?.text_model || env.DEEPSEEK_MODEL || "deepseek-flash", voiceModel: speech.provider === "qwen3" ? speech.model : row?.voice_model || speech.minimaxModel, speechProvider: speech.provider };
 }
 export async function exercise(userId: string, id: string, kind: string): Promise<ExerciseRow> {
   const row = await database().prepare("SELECT * FROM exercises WHERE id = ? AND user_id = ? AND kind = ?").bind(id, userId, kind).first<ExerciseRow>();

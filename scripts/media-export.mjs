@@ -38,7 +38,7 @@ async function readWordIndex(root) {
   return words;
 }
 function ownedPath(output, relative) {
-  if (typeof relative !== 'string' || !/^(images|audio)\/[a-zA-Z0-9_.'-]+\.(png|jpg|webp|mp3)$/.test(relative)) return null;
+  if (typeof relative !== 'string' || !/^(images|audio)\/[a-zA-Z0-9_.'-]+\.(png|jpg|webp|mp3|wav)$/.test(relative)) return null;
   const resolved = path.resolve(output, relative);
   return resolved.startsWith(path.resolve(output) + path.sep) ? resolved : null;
 }
@@ -67,10 +67,10 @@ export async function exportMedia(root) {
     for (const object of objects) {
       if (!/^(images|speech)\/[a-zA-Z0-9_.-]+$/.test(object.key) || !/^[a-zA-Z0-9_-]+$/.test(object.blob_id)) continue;
       const metadata = JSON.parse(object.http_metadata), custom = JSON.parse(object.custom_metadata || '{}');
-      const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'audio/mpeg': '.mp3' }[metadata.contentType];
+      const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'audio/mpeg': '.mp3', 'audio/wav': '.wav' }[metadata.contentType];
       const word = custom.word || wordIndex.get(object.key);
       if (!ext || !word) continue;
-      const folder = ext === '.mp3' ? 'audio' : 'images';
+      const folder = ['.mp3', '.wav'].includes(ext) ? 'audio' : 'images';
       const base = mediaName(word, object.uploaded);
       const previous = manifest[object.key];
       let relative = previous?.namingVersion === 2 && ownedPath(output, previous.file) ? previous.file : folder + '/' + base + ext;

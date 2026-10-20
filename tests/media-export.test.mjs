@@ -34,6 +34,12 @@ test('media export preserves bytes, skips unchanged files, and syncs future medi
     insert.run('speech/example-voice.mp3', 'audioblob', audio.length, 'mp3-etag', JSON.stringify({ contentType: 'audio/mpeg' }), JSON.stringify({word:'meticulous'}), 1791342000000);
     await new Promise(resolve => setTimeout(resolve, 5500));
     assert.deepEqual(await fs.readFile(path.join(root, 'media/audio/'+mediaName('meticulous',1791342000000)+'.mp3')), audio);
+    const wav = Buffer.from('RIFF-test-local-WAVE');
+    await fs.writeFile(path.join(blobs, 'wavblob'), wav);
+    insert.run('speech/local-voice.wav', 'wavblob', wav.length, 'wav-etag', JSON.stringify({ contentType: 'audio/wav' }), JSON.stringify({word:'meticulous'}), 1791342000000);
+    assert.equal((await exportMedia(root)).copied, 1);
+    assert.deepEqual(await fs.readFile(path.join(root, 'media/audio/'+mediaName('meticulous',1791342000000)+'.wav')), wav);
+    assert.equal((await exportMedia(root)).copied, 0);
     await fs.unlink(picture);
     assert.equal((await exportMedia(root)).copied, 1);
     assert.deepEqual(await fs.readFile(picture), png);

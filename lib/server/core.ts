@@ -8,7 +8,7 @@ export type Sense = {
   id: string; word: string; phonetic: string; pos: string; meaning: string; definition: string;
   learned: boolean; mastery: number; reviewCount: number; createdAt: number; materials: Material[];
 };
-export type Settings = { textModel: string; voiceModel: string };
+export type Settings = { textModel: string; voiceModel: string; speechProvider: "minimax" | "qwen3" };
 export type Feedback = { appropriate: boolean; score: number; scenarioFeedback: string; grammarFeedback: string; improvedSentence: string };
 
 export class AppError extends Error {

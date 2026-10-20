@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { webcrypto } from 'node:crypto';
 import ts from 'typescript';
 
-async function harness() {
+async function harness(options = {}) {
   const root = path.resolve(import.meta.dirname, '..');
   const db = new DatabaseSync(':memory:');
   for (const name of fs.readdirSync(path.join(root, 'drizzle')).filter(n => n.endsWith('.sql')).sort()) db.exec(fs.readFileSync(path.join(root, 'drizzle', name), 'utf8'));
@@ -25,13 +25,18 @@ async function harness() {
   const materials = [{ id: 'description', kind: 'description', text: 'Very careful about details.' }, { id: 'example', kind: 'example', text: 'She was meticulous about her desk.' }, { id: 'synonym', kind: 'synonym', text: 'He was careful with the cup.' }];
   db.prepare('INSERT INTO senses(id,user_id,word,phonetic,pos,meaning,definition,learned,mastery,review_count,materials,created_at,updated_at) VALUES(?,?,?,?,?,?,?,1,0,0,?,1,1)').run('sense-a', 'tester', 'meticulous', '', 'adj.', '一丝不苟的', 'Very careful about every detail.', JSON.stringify(materials));
   const calls = []; let next = {};
+  const audio = new Map(), speechCalls = [];
+  const env = { DB: adapter, ...options, BUCKET: {
+    async head(key) { return audio.get(key) || null; },
+    async put(key, bytes, metadata) { audio.set(key, { bytes, ...metadata }); },
+  } };
   const context = vm.createContext({ console, crypto: webcrypto, TextEncoder, Uint8Array, atob });
-  const envModule = new vm.SyntheticModule(['env'], function () { this.setExport('env', { DB: adapter }); }, { context });
-  const providers = new vm.SyntheticModule(['generate', 'speech', 'generateImage', 'VOICES'], function () {
+  const envModule = new vm.SyntheticModule(['env'], function () { this.setExport('env', env); }, { context });
+  const providers = new vm.SyntheticModule(['generate', 'speech', 'generateImage', 'speechVoices'], function () {
     this.setExport('generate', async (_settings, instruction, data) => { calls.push({ instruction, data }); return next; });
-    this.setExport('speech', async () => { throw new Error('Unexpected speech generation'); });
+    this.setExport('speech', async (...args) => { speechCalls.push(args); return new Uint8Array([1, 2, 3]); });
     this.setExport('generateImage', async () => { throw new Error('Unexpected image generation'); });
-    this.setExport('VOICES', [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }]);
+    this.setExport('speechVoices', () => env.TTS_PROVIDER === 'qwen3' ? ['Ryan', 'Aiden', 'Serena', 'Vivian'].map(name => ({ id: 'qwen3:' + name, label: name })) : [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }]);
   }, { context });
   const cache = new Map();
   function load(file) {
@@ -42,8 +47,39 @@ async function harness() {
   const service = load(path.join(root, 'lib/server/service.ts'));
   await service.link((specifier, parent) => specifier === 'cloudflare:workers' ? envModule : specifier === './providers' ? providers : load(path.resolve(path.dirname(parent.identifier), specifier + '.ts')));
   await service.evaluate();
-  return { db, calls, set(value) { next = value; }, action: body => service.namespace.action('tester', body) };
+  return { db, calls, audio, speechCalls, env, set(value) { next = value; }, action: body => service.namespace.action('tester', body) };
 }
+
+test('switching speech provider uses local voices and WAV cache, retaining MiniMax settings and audio', async () => {
+  const h = await harness();
+  try {
+    await h.action({ action: 'settings', textModel: 'deepseek-flash', voiceModel: 'speech-2.6-hd' });
+    const start = () => h.action({ action: 'listeningStart', senseId: 'sense-a', materialId: 'example' });
+    const cloud = await start();
+    const cloudAudio = await h.action({ action: 'listeningAudio', sessionId: cloud.sessionId, voiceId: cloud.voices[0].id });
+    h.env.TTS_PROVIDER = 'qwen3';
+    const local = await start();
+    assert.equal(local.voices.length, 3);
+    assert.ok(local.voices.every(v => v.id.startsWith('qwen3:')));
+    for (const action of ['listeningAudio', 'listeningMore']) await assert.rejects(h.action({ action, sessionId: cloud.sessionId, voiceId: cloud.voices[0].id }), e => e.code === 'SPEECH_VOICE_CHANGED');
+    const play = () => h.action({ action: 'listeningAudio', sessionId: local.sessionId, voiceId: local.voices[0].id });
+    const result = await play();
+    assert.equal((await play()).url, result.url);
+    assert.notEqual(result.url, cloudAudio.url);
+    assert.equal(h.speechCalls.length, 2);
+    assert.ok(h.speechCalls[1][0].voiceModel.includes('CustomVoice'));
+    assert.equal([...h.audio.keys()].filter(key => key.endsWith('.wav')).length, 1);
+    assert.equal([...h.audio.values()][1].httpMetadata.contentType, 'audio/wav');
+    const changed = await h.action({ action: 'settings', textModel: 'deepseek-new', voiceModel: 'ignored/local-model' });
+    assert.equal(changed.settings.speechProvider, 'qwen3');
+    assert.equal(h.db.prepare('SELECT voice_model FROM user_settings').get().voice_model, 'speech-2.6-hd');
+    h.env.QWEN_TTS_MODEL = 'Qwen/another-CustomVoice';
+    assert.notEqual((await play()).url, result.url);
+    h.env.TTS_PROVIDER = 'minimax';
+    assert.equal((await h.action({ action: 'listeningAudio', sessionId: cloud.sessionId, voiceId: cloud.voices[0].id })).url, cloudAudio.url);
+    assert.equal(h.speechCalls.length, 3);
+  } finally { h.db.close(); }
+});
 
 test('review moves directly to independent writing and assesses the learner context', async () => {
   const h = await harness();

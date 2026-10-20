@@ -1,6 +1,7 @@
 import { illustrate } from "./illustration";
 import { AppError, input, record, modelText, normalize, dictationScore, chooseWeighted, isCopied, shuffled, validateFeedback, type Material, type MaterialKind, type Sense, type Settings } from "./core";
-import { generate, speech, VOICES } from "./providers";
+import { generate, speech, speechVoices } from "./providers";
+import { speechConfiguration } from "./speech-config";
 import { database, bucket, settings, getSense, listSenses, publicSense, exercise, createExercise, updateMaterials, type SenseRow, type ExerciseRow } from "./store";
 
 const kinds: MaterialKind[] = ["description", "example", "synonym", "antonym"];
@@ -35,6 +36,7 @@ async function assessIndependent(config: Settings, sense: Sense, answer: string)
 export async function action(userId: string, body: Record<string, unknown>): Promise<unknown> {
   const name = input(body.action, "操作", 40);
   const config = await settings(userId);
+  const VOICES = speechVoices();
 
   if (name === "translateText") {
     const text = input(body.text, "Text", 4500);
@@ -123,6 +125,7 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
   if (["listeningMore", "listeningAudio", "listeningSubmit", "listeningHint"].includes(name)) {
     const row = await exercise(userId, input(body.sessionId, "听写编号", 80), "listening");
     const stored = data(row), voices = stored.voices as typeof VOICES;
+    if (["listeningMore", "listeningAudio"].includes(name) && voices.some(voice => !VOICES.some(available => available.id === voice.id))) throw new AppError("语音服务已切换，请重新进入听写练习。", 409, "SPEECH_VOICE_CHANGED");
     if (name === "listeningMore") {
       for (let attempt = 0; attempt < VOICES.length; attempt++) {
         const current = data(await exercise(userId, row.id, "listening"));
@@ -140,13 +143,17 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
       if (audioMaterial.kind === "description") throw new AppError("听写只提供例句，请重新选择听力材料。", 400, "EXAMPLE_REQUIRED");
       const voiceId = input(body.voiceId, "音色编号", 100);
       if (!voices.some(voice => voice.id === voiceId)) throw new AppError("请使用这次练习提供的音色。");
-      const bytes = new TextEncoder().encode([userId, config.voiceModel, voiceId, stored.text].join("|"));
+      const speechConfig = speechConfiguration();
+      // Preserve existing MiniMax cache keys; separate local WAV audio by provider and language.
+      const identity = [userId, config.voiceModel, voiceId, stored.text];
+      if (speechConfig.provider === "qwen3") identity.unshift("qwen3:English:v1");
+      const bytes = new TextEncoder().encode(identity.join("|"));
       const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(value => value.toString(16).padStart(2, "0")).join("");
-      const cacheKey = `speech/${hash}.mp3`;
+      const cacheKey = `speech/${hash}.${speechConfig.extension}`;
       let file = await database().prepare("SELECT id FROM audio_files WHERE user_id=? AND cache_key=? LIMIT 1").bind(userId, cacheKey).first<{ id: string }>();
       if (!file || !(await bucket().head(cacheKey))) {
         const audio = await speech(config, modelText(stored.text), voiceId);
-        await bucket().put(cacheKey, audio, { httpMetadata: { contentType: "audio/mpeg" }, customMetadata: { word: audioSense.word } });
+        await bucket().put(cacheKey, audio, { httpMetadata: { contentType: speechConfig.contentType }, customMetadata: { word: audioSense.word } });
         if (!file) { file = { id: crypto.randomUUID() }; await database().prepare("INSERT INTO audio_files (id,user_id,cache_key,created_at) VALUES (?,?,?,?)").bind(file.id, userId, cacheKey, Date.now()).run(); }
       }
       return { url: `/api/audio?id=${encodeURIComponent(file.id)}` };
@@ -197,10 +204,17 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
   }
 
   if (name === "settings") {
+    if (config.speechProvider === "qwen3") {
+      const textModel = input(body.textModel, "文本模型", 100);
+      if (!/^[a-zA-Z0-9_.:-]+$/.test(textModel)) throw new AppError("模型名称只允许字母、数字和 . _ : -。");
+      // The local model is loaded by the Demo. Keep any saved MiniMax model for switching back.
+      await database().prepare("INSERT INTO user_settings (user_id,text_model,voice_model) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET text_model=excluded.text_model").bind(userId, textModel, speechConfiguration().minimaxModel).run();
+      return { settings: await settings(userId) };
+    }
     const textModel = input(body.textModel, "文本模型", 100), voiceModel = input(body.voiceModel, "语音模型", 100);
     if (![textModel, voiceModel].every(value => /^[a-zA-Z0-9_.:-]+$/.test(value))) throw new AppError("模型名称只允许字母、数字和 . _ : -。");
     await database().prepare("INSERT INTO user_settings (user_id,text_model,voice_model) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET text_model=excluded.text_model,voice_model=excluded.voice_model").bind(userId, textModel, voiceModel).run();
-    return { settings: { textModel, voiceModel } };
+    return { settings: await settings(userId) };
   }
   throw new AppError("未识别的操作。", 400, "UNKNOWN_ACTION");
 }

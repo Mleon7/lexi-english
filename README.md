@@ -17,7 +17,7 @@ git clone https://github.com/Mleon7/lexi-english.git lexi-english
 cd lexi-english
 npm run install:ci
 cp .env.example .env  # 已有配置时不要覆盖
-nano .env            # 填写 DeepSeek 和 MiniMax 密钥
+nano .env            # 填写 DeepSeek 密钥，选择 MiniMax 或本地 Qwen3-TTS
 npm run local:start
 ```
 
@@ -54,13 +54,29 @@ Copy-Item .env.example .env
 
 ### 2. 填写 API 密钥
 
-编辑项目根目录的 `.env`，将 `DEEPSEEK_API_KEY` 和 `MINIMAX_API_KEY` 替换为自己的密钥，按账户权限确认模型名称。启动脚本会检查两个密钥；调用服务会消耗相应账户额度。
+编辑项目根目录的 `.env`，填写 `DEEPSEEK_API_KEY`。语音默认使用 MiniMax，需要 `MINIMAX_API_KEY`；也可以使用下面的本地 Qwen3-TTS。场景图片仍需 MiniMax 密钥，在线服务调用会消耗相应账户额度。
 
 ### 3. 启动与关闭
 
 双击 `启动词境.cmd`，等待初始化数据库并自动打开浏览器。默认地址为 `http://127.0.0.1:5173/`，端口占用时会自动选择其他端口，以启动窗口为准。
 
 使用结束后双击 `关闭词境.cmd`，不要仅关闭浏览器。详细配置、备份和故障排查见 [使用说明](使用说明.md)。
+
+## 使用本地 Qwen3-TTS
+
+安装好 `qwen-tts-demo` 的 **CustomVoice** 模型后，在词境的 `.env` 中设置（目录按实际安装位置修改）：
+
+```dotenv
+TTS_PROVIDER=qwen3
+QWEN_TTS_URL=http://127.0.0.1:8000
+QWEN_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+QWEN_TTS_DIR=/mnt/e/ai/qwen3-tts
+QWEN_TTS_OFFLINE=1
+```
+
+然后执行 `npm run local:stop` 和 `npm run local:start`。启动入口会同时启动词境与 Qwen，显示加载进度，等待两项服务都就绪。刷新词境，进入“听”并点击音色。语音由本机生成，无需 MiniMax 语音密钥；DeepSeek 和场景图片仍使用各自的在线服务。
+
+`npm run local:stop` 会同时关闭由词境启动的 Qwen 并释放显存。已运行的 Qwen 会被复用，关闭词境时保留；不设置 `QWEN_TTS_DIR` 时需自行启动 Qwen。模型加载日志在 `.local-run/qwen-tts.log`。使用 VS Code Remote Tunnel 时，只需转发词境端口；词境后端通过本地地址访问 Qwen。安装、启动及故障排查见 [本地语音配置](使用说明.md#本地-qwen3-tts)。
 
 ## 学习流程
 
@@ -97,7 +113,8 @@ Copy-Item .env.example .env
 ## 工作原理
 
 - **DeepSeek**：提供词义、学习材料、英文场景、中文翻译和造句评估，也为图片编写场景提示词。
-- **MiniMax**：将例句转成不同音色的语音，并生成场景图片。音频首次播放时按需生成，后续复用已保存文件。
+- **语音**：支持 MiniMax 或本地 Qwen3-TTS CustomVoice，将英文例句转成不同音色。首次播放时生成，后续复用已保存文件。
+- **MiniMax 图片**：按需生成场景图片，与语音服务选择独立。
 - **本地应用与存储**：React/Vinext 提供页面和接口，通过本地 D1/SQLite 与 R2 模拟存储保存学习记录和媒体。普通媒体副本自动导出到 `media/images`、`media/audio`，使用“单词_日期_时间_毫秒”命名。
 - **复习抽样**：每个词义单独记录熟悉度。答对填空且自主造句通过后，后续抽中概率降低；失败则提高复习优先级。
 
@@ -108,7 +125,7 @@ Copy-Item .env.example .env
 - **前端**：React 19、TypeScript、Tailwind CSS 4。
 - **应用框架**：Vinext / Vite，采用 Next.js 风格的路由与接口。
 - **数据存储**：Drizzle ORM、本地 Cloudflare D1 / R2 模拟存储。
-- **模型服务**：DeepSeek 文本生成与评估、MiniMax 语音与图片生成。
+- **模型服务**：DeepSeek 文本生成与评估、MiniMax 或本地 Qwen3-TTS 语音、MiniMax 图片生成。
 
 ```text
 app/                 页面与 API 接口

@@ -1,5 +1,7 @@
 import { env } from "cloudflare:workers";
 import { AppError, record, decodeImage, input, type Settings } from "./core";
+import { QWEN_VOICES, speechConfiguration } from "./speech-config";
+import { qwenSpeech } from "./qwen-tts";
 
 // Official API references: api-docs.deepseek.com and platform.minimax.cn/docs.
 export const VOICES = [
@@ -10,6 +12,8 @@ export const VOICES = [
   { id: "English_Diligent_Man", label: "认真男声" },
   { id: "English_Gentle-voiced_man", label: "温柔男声" },
 ];
+
+export function speechVoices() { return speechConfiguration().provider === "qwen3" ? QWEN_VOICES : VOICES; }
 
 async function upstream(url: string, key: string, body: unknown, provider: string, timeout = 55000): Promise<Record<string, unknown>> {
   let response: Response;
@@ -42,8 +46,10 @@ export async function generate(settings: Settings, instruction: string, data: un
 }
 
 export async function speech(settings: Settings, text: string, voiceId: string): Promise<Uint8Array> {
+  if (!speechVoices().some(voice => voice.id === voiceId)) throw new AppError("音色已变更，请重新进入听写练习。", 409, "SPEECH_VOICE_CHANGED");
+  const config = speechConfiguration();
+  if (config.provider === "qwen3") return qwenSpeech(config.baseUrl, text, voiceId.slice("qwen3:".length));
   if (!env.MINIMAX_API_KEY) throw new AppError("请先在站点服务端配置 MiniMax 语音密钥。", 503, "SPEECH_NOT_CONFIGURED");
-  if (!VOICES.some(voice => voice.id === voiceId)) throw new AppError("无效的音色。");
   const result = await upstream("https://api.minimax.cn/v1/t2a_v2", env.MINIMAX_API_KEY, {
     model: settings.voiceModel, text, stream: false, language_boost: "English", output_format: "hex",
     voice_setting: { voice_id: voiceId, speed: 1, vol: 1, pitch: 0 },
