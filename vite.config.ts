@@ -4,6 +4,7 @@ import hostingConfig from "./.openai/hosting.json";
 import { readExecutionProfile } from "./scripts/execution-profile.mjs";
 import { sites } from "./build/sites-vite-plugin";
 import { connectorPreview } from "./build/connector-preview-plugin.mjs";
+import { devCacheReset } from "./build/dev-cache-reset-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -64,6 +65,7 @@ export default defineConfig(async ({ command }) => {
         : {}),
     },
     plugins: [
+      devCacheReset(),
       vinext(),
       sites({
         mockAuth: !managedLinux,
