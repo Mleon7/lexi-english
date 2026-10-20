@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { blankable, buildCloze, clozeMatches, parsePassage, stanzas } from "../lib/cloze.ts";
+import { blankable, buildCloze, clozeMatches, parsePassage, phraseSpans, stanzas } from "../lib/cloze.ts";
 
 const song = "[Chorus]\nI'm gonna make a change, for once in my life\nIt's gonna feel real good\n\nI'm Gonna Make A Change — for once in my life!\n(Ooh, yeah)\nIt's gonna feel real good";
 function seeded(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
@@ -54,4 +54,15 @@ test("stanzas split at empty lines and section labels, and long runs are chunked
     assert.ok(cloze.blanks.every((blank, index) => cloze.segments[blank.segment].blanks.includes(index) && cloze.segments[blank.segment].lines.includes(blank.line)));
     assert.equal(cloze.segments[1].blanks.length, 0);
   }
+});
+
+test("marked expressions become single tap targets, longest first, wherever they recur", () => {
+  const [line] = parsePassage("I came across you, Came Across the sea and gave it up");
+  const spans = phraseSpans(line, [{ text: "came across", phrase: "come across" }, { text: "gave it up", phrase: "give up" }, { text: "across", phrase: "across" }, { text: "the river", phrase: "the river" }]);
+  assert.deepEqual(spans.map(span => [span.text, span.phrase]), [["came across", "come across"], ["Came Across", "come across"], ["gave it up", "give up"]]);
+  assert.equal(line.tokens.slice(spans[2].start, spans[2].end + 1).map(token => token.text).join(""), "gave it up");
+  const [overlap] = parsePassage("Don't give up on me");
+  assert.deepEqual(phraseSpans(overlap, [{ text: "give up", phrase: "give up" }, { text: "give up on", phrase: "give up on" }]).map(span => span.text), ["give up on"]);
+  const [lyric] = parsePassage("We're makin’ it through");
+  assert.deepEqual(phraseSpans(lyric, [{ text: "makin' it", phrase: "make it" }]).map(span => span.text), ["makin’ it"]);
 });

@@ -227,3 +227,40 @@ test('a word picked from a lyric line resolves its sense from that line and keep
   } finally { h.db.close(); }
 });
 
+test('fixed expressions are marked once per text version and steer the lookup of a tapped expression', async () => {
+  const h = await harness();
+  try {
+    const text = '[Verse]\nI came across a river\nI came across a river\n\nNow I give it up';
+    const { passage } = await h.action({ action: 'passageSave', title: 'River Song', text });
+    assert.equal(passage.phrases, null);
+    h.set({ phrases: [
+      { line: 0, text: 'came across', phrase: 'Come Across' },
+      { line: 1, text: 'give it up', phrase: 'give up' },
+      { line: 1, text: 'give it up', phrase: 'give up' },
+      { line: 0, text: 'across a lake', phrase: 'across' },
+      { line: 7, text: 'came across', phrase: 'come across' },
+      { line: '1', text: 'Now I', phrase: 'now' },
+      { line: 1, text: 'Now I give it up', phrase: 'ignore <this>' },
+    ] });
+    const { passage: marked } = await h.action({ action: 'passagePhrases', passageId: passage.id });
+    assert.deepEqual(JSON.parse(JSON.stringify(h.calls[0].data.lines)), ['I came across a river', 'Now I give it up']);
+    assert.deepEqual(JSON.parse(JSON.stringify(marked.phrases)), [{ line: 'I came across a river', text: 'came across', phrase: 'come across' }, { line: 'Now I give it up', text: 'give it up', phrase: 'give up' }]);
+    assert.equal(marked.updatedAt, passage.updatedAt);
+
+    h.set({ word: 'come across', contextIndex: 0, senses: [{ pos: 'phr. v.', meaning: '偶然遇见', definition: 'To find or meet by chance.' }] });
+    const found = await h.action({ action: 'passageLookup', passageId: passage.id, line: 'I came across a river', selection: 'came across' });
+    assert.equal(found.sense.word, 'come across'); assert.equal(h.calls[1].data.phrase, 'come across');
+    h.set({ word: 'river', contextIndex: 0, senses: [{ pos: 'n.', meaning: '河', definition: 'A large stream of water.' }] });
+    await h.action({ action: 'passageLookup', passageId: passage.id, line: 'I came across a river', selection: 'river' });
+    assert.equal(h.calls[2].data.phrase, undefined);
+
+    assert.equal((await h.action({ action: 'passageSave', passageId: passage.id, title: 'Renamed', text })).passage.phrases.length, 2);
+    const edited = await h.action({ action: 'passageSave', passageId: passage.id, title: 'Renamed', text: `${text}\nOne more line` });
+    assert.equal(edited.passage.phrases, null);
+    // The text changes again while the model is still answering: that answer is not saved.
+    h.set({ get phrases() { h.db.prepare("UPDATE passages SET text='Brand new words' WHERE id=?").run(passage.id); return [{ line: 0, text: 'came across', phrase: 'come across' }]; } });
+    assert.equal((await h.action({ action: 'passagePhrases', passageId: passage.id })).passage.phrases, null);
+    h.set({ phrases: 'none' });
+    await assert.rejects(h.action({ action: 'passagePhrases', passageId: passage.id }), e => e.code === 'INVALID_MODEL_OUTPUT');
+  } finally { h.db.close(); }
+});

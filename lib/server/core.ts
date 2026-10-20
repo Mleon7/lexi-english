@@ -1,3 +1,5 @@
+import type { PassagePhrase } from "../cloze";
+
 export type MaterialKind = "description" | "example" | "synonym" | "antonym";
 export type Material = {
   id: string; kind: MaterialKind; text: string; term?: string; relationNote?: string;
@@ -8,7 +10,7 @@ export type Sense = {
   id: string; word: string; phonetic: string; pos: string; meaning: string; definition: string;
   learned: boolean; mastery: number; reviewCount: number; createdAt: number; materials: Material[];
 };
-export type Passage = { id: string; title: string; author: string; text: string; createdAt: number; updatedAt: number };
+export type Passage = { id: string; title: string; author: string; text: string; phrases: PassagePhrase[] | null; createdAt: number; updatedAt: number };
 export type Settings = { textModel: string; voiceModel: string; speechProvider: "minimax" | "qwen3" };
 export type Feedback = { appropriate: boolean; score: number; scenarioFeedback: string; grammarFeedback: string; improvedSentence: string };
 

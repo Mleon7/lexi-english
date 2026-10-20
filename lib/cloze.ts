@@ -7,6 +7,9 @@ export type ClozeLine = PassageLine & { slots: (number | undefined)[]; repeatOf?
 export type ClozeBlank = { answer: string; line: number; segment: number };
 export type ClozeSegment = { lines: number[]; blanks: number[] };
 export type Cloze = { lines: ClozeLine[]; blanks: ClozeBlank[]; segments: ClozeSegment[] };
+// A fixed expression found when the text was saved: `text` as it appears in `line`, `phrase` its dictionary form.
+export type PassagePhrase = { line: string; text: string; phrase: string };
+export type PhraseSpan = { start: number; end: number; text: string; phrase: string };
 
 const WORD = /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu;
 // Interjections such as "ooh", "yeah", "na-na" are not worth memorising.
@@ -34,6 +37,26 @@ export function parsePassage(text: string): PassageLine[] {
 }
 
 function lower(word: string) { return word.toLowerCase().replace(/’/g, "'"); }
+
+// Locate fixed expressions as token ranges of a line, so tapping any of their
+// words looks up the whole expression. Longer expressions win an overlap, and an
+// expression is marked wherever it recurs in the line.
+export function phraseSpans(line: PassageLine, phrases: Pick<PassagePhrase, "text" | "phrase">[]): PhraseSpan[] {
+  const words = line.tokens.flatMap((token, index) => token.word ? [index] : []);
+  const used = new Set<number>(), spans: PhraseSpan[] = [];
+  const targets = phrases.map(item => ({ ...item, words: Array.from(item.text.matchAll(WORD), match => lower(match[0])) })).filter(item => item.words.length >= 2 && item.words.length <= 6).sort((a, b) => b.words.length - a.words.length);
+  for (const target of targets) {
+    for (let i = 0; i + target.words.length <= words.length; i++) {
+      const range = words.slice(i, i + target.words.length);
+      if (range.some(index => used.has(index)) || !range.every((index, n) => lower(line.tokens[index].text) === target.words[n])) continue;
+      range.forEach(index => used.add(index));
+      const start = range[0], end = range[range.length - 1];
+      spans.push({ start, end, text: line.tokens.slice(start, end + 1).map(token => token.text).join(""), phrase: target.phrase });
+      i += target.words.length - 1;
+    }
+  }
+  return spans.sort((a, b) => a.start - b.start);
+}
 
 // Lines that differ only in case or punctuation count as the same lyric line.
 export function lineKey(line: PassageLine): string { return line.tokens.filter(token => token.word).map(token => lower(token.text)).join(" "); }

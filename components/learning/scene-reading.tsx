@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, BookOpen, CheckCheck, Info, Plus, Quote, Search, X } from "lucide-react";
-import { parsePassage } from "@/lib/cloze";
+import { ArrowRight, BookOpen, CheckCheck, Info, LoaderCircle, Plus, Quote, Search, X } from "lucide-react";
+import { parsePassage, phraseSpans, type PassageLine } from "@/lib/cloze";
 import { type Passage, type Sense, type Notify } from "./types";
 import { ApiError, request } from "./api";
 import { Highlight, Loading } from "./shared";
@@ -13,8 +13,9 @@ type Lookup = Pick & { status: "loading" | "ready" | "error"; sense?: Sense; col
 const MAX_WORDS = 6;
 const edges = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu;
 
-export function PassageReading({ passage, onSense, onOpenSense, onError, notify }: { passage: Passage; onSense: (s: Sense) => void; onOpenSense: (id: string) => void; onError: (e: unknown) => void; notify: Notify }) {
+export function PassageReading({ passage, phraseError, onRetryPhrases, onSense, onOpenSense, onError, notify }: { passage: Passage; phraseError?: string; onRetryPhrases: () => void; onSense: (s: Sense) => void; onOpenSense: (id: string) => void; onError: (e: unknown) => void; notify: Notify }) {
   const lines = useMemo(() => parsePassage(passage.text), [passage.text]);
+  const spans = useMemo(() => lines.map(line => line.kind === "text" && passage.phrases ? phraseSpans(line, passage.phrases.filter(item => item.line === line.text)) : []), [lines, passage.phrases]);
   const [lookup, setLookup] = useState<Lookup | null>(null); const [pending, setPending] = useState<Pick | null>(null); const [adding, setAdding] = useState(false);
   const version = useRef(0); const textRef = useRef<HTMLDivElement>(null); const current = useRef<Lookup | null>(null);
   useEffect(() => { current.current = lookup; }, [lookup]);
@@ -77,19 +78,35 @@ export function PassageReading({ passage, onSense, onOpenSense, onError, notify 
   }
 
   const picked = new Set(lookup?.selection.toLowerCase().split(" "));
+  // A multi-word lookup can be split, in case only one of its words was meant.
+  const parts = lookup ? [...new Set(parsePassage(lookup.selection)[0]?.tokens.filter(token => token.word).map(token => token.text))] : [];
+  const phraseCount = spans.reduce((sum, list) => sum + list.length, 0);
   const tooLong = !!pending && pending.selection.split(" ").length > MAX_WORDS;
   const sense = lookup?.status === "ready" ? lookup.sense : undefined;
   // One tab stop for the whole text; arrow keys move between words.
   const firstLine = lines.findIndex(line => line.tokens.some(token => token.word)), firstToken = lines[firstLine]?.tokens.findIndex(token => token.word);
+  // A marked expression is one tap target; its words light up alone when one of them was looked up.
+  function words(line: PassageLine, index: number) {
+    const active = lookup?.line === index, nodes: React.ReactNode[] = [];
+    const focus = (position: number) => index === firstLine && position === firstToken ? 0 : -1;
+    for (let position = 0; position < line.tokens.length; position++) {
+      const token = line.tokens[position], span = spans[index].find(item => item.start === position);
+      if (span) {
+        const whole = active && lookup.selection.toLowerCase() === span.text.toLowerCase();
+        nodes.push(<span key={position} className={`passage-word passage-phrase ${whole ? "is-picked" : ""}`} data-word={span.text} title={`词组：${span.phrase}`} role="button" tabIndex={focus(position)}>{line.tokens.slice(position, span.end + 1).map((part, n) => <span key={n} className={!whole && active && part.word && picked.has(part.text.toLowerCase()) ? "is-picked" : undefined}>{part.text}</span>)}</span>);
+        position = span.end;
+      } else if (!token.word) nodes.push(<span key={position}>{token.text}</span>);
+      else nodes.push(<span key={position} className={`passage-word ${active && picked.has(token.text.toLowerCase()) ? "is-picked" : ""}`} data-word={token.text} role="button" tabIndex={focus(position)}>{token.text}</span>);
+    }
+    return nodes;
+  }
   return <div className="scene-layout">
-    <section className="lesson-card practice-card passage-card"><div className="section-top"><div className="section-label"><span className="section-icon"><BookOpen size={17} /></span><h2>在原文里读懂它</h2><span>READ IN CONTEXT</span></div><span className="item-count">轻点单词 · 拖选短语</span></div>
-      <p className="practice-intro">遇到想弄懂的词，轻点它；想查短语，就拖选几个词。词义按它所在的这一句来判断，加入单词本时，这句原文会成为它的例句。</p>
+    <section className="lesson-card practice-card passage-card"><div className="section-top"><div className="section-label"><span className="section-icon"><BookOpen size={17} /></span><h2>在原文里读懂它</h2><span>READ IN CONTEXT</span></div>{passage.phrases ? <span className="item-count">{phraseCount ? `${phraseCount} 处词组 · 轻点整体查询` : "轻点单词 · 拖选短语"}</span> : phraseError ? <span className="item-count">轻点单词 · 拖选短语</span> : <span className="item-count phrase-status"><LoaderCircle size={11} className="spin" />正在标出词组…</span>}</div>
+      <p className="practice-intro">遇到想弄懂的词，轻点它；虚线标出的是词组和固定搭配，点其中任一个词就会整体查询。想查别的短语，就拖选几个词。词义按它所在的这一句来判断，加入单词本时，这句原文会成为它的例句。</p>
+      {phraseError && <p className="inline-error phrase-error" role="alert">词组没有标出来：{phraseError}<button className="text-button" onClick={onRetryPhrases}>重新识别</button></p>}
       <div className="passage-text" ref={textRef} onKeyDown={keys} onClick={event => { if (window.getSelection()?.isCollapsed === false) return; const hit = wordAt(event.target as Element); if (hit) void look(hit); }}>
         {lines.map((line, index) => line.kind === "empty" ? <div className="passage-gap" key={index} /> : line.kind === "section" ? <div className="passage-section" key={index}>{line.text}</div> :
-          <p className={`passage-line ${lookup?.line === index ? "is-active" : ""}`} data-line={index} key={index}>{line.tokens.map((token, position) => {
-            if (!token.word) return <span key={position}>{token.text}</span>;
-            return <span key={position} className={`passage-word ${lookup?.line === index && picked.has(token.text.toLowerCase()) ? "is-picked" : ""}`} data-word={token.text} role="button" tabIndex={index === firstLine && position === firstToken ? 0 : -1}>{token.text}</span>;
-          })}</p>)}
+          <p className={`passage-line ${lookup?.line === index ? "is-active" : ""}`} data-line={index} key={index}>{words(line, index)}</p>)}
       </div>
     </section>
     <aside className={`scene-lookup ${lookup || pending ? "is-active" : ""}`} aria-live="polite">
@@ -112,7 +129,8 @@ export function PassageReading({ passage, onSense, onOpenSense, onError, notify 
               {sense.learned && <button className="text-button" onClick={() => onOpenSense(sense.id)}>去学习这个词义 <ArrowRight size={13} /></button>}
             </div>
           </>}
-        </div> : !pending && <div className="lookup-idle"><span className="eyebrow">READ IN CONTEXT</span><h3>同一个词，<br />在不同句子里不一样。</h3><p>轻点任意单词，按它所在的这一句给出词义；拖选几个词，可以查询短语。</p><p className="lookup-tip"><Info size={13} />已经学过的词义会被认出来，不会重复加入。</p></div>}
+          {lookup.status !== "loading" && parts.length > 1 && <div className="lookup-split"><span>拆开单独查</span>{parts.map(part => <button key={part} className="lookup-chip" onClick={() => void look({ line: lookup.line, selection: part })}>{part}</button>)}</div>}
+        </div> : !pending && <div className="lookup-idle"><span className="eyebrow">READ IN CONTEXT</span><h3>同一个词，<br />在不同句子里不一样。</h3><p>轻点任意单词，按它所在的这一句给出词义；虚线标出的词组会整体查询，拖选几个词可以查询其他短语。</p><p className="lookup-tip"><Info size={13} />已经学过的词义会被认出来，不会重复加入。</p></div>}
       </div>
     </aside>
   </div>;

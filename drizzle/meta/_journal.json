@@ -15,6 +15,13 @@
       "when": 1792504405286,
       "tag": "0001_passages",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792514181134,
+      "tag": "0002_passage_phrases",
+      "breakpoints": true
     }
   ]
 }

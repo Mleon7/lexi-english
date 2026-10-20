@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BookOpen, Check, ChevronRight, Headphones, Info, Mic, Music2, PenLine, Plus, Search, Trash2 } from "lucide-react";
 import { parsePassage } from "@/lib/cloze";
 import { type Passage, type Sense, type Notify } from "./types";
-import { request } from "./api";
+import { ApiError, request } from "./api";
 import { Loading, Modal } from "./shared";
 import { PassageReading } from "./scene-reading";
 import { PassageCloze } from "./scene-cloze";
@@ -32,15 +32,27 @@ export function PassageSidebar({ passages, selected, loading, onSelect, onAdd }:
   </>;
 }
 
-export function Scene({ passage, senses, loading, onAdd, onEdit, onSense, onOpenSense, onError, notify }: { passage?: Passage; senses: Sense[]; loading: boolean; onAdd: () => void; onEdit: () => void; onSense: (s: Sense) => void; onOpenSense: (id: string) => void; onError: (e: unknown) => void; notify: Notify }) {
-  const [tab, setTab] = useState<SceneTab>("read");
+export function Scene({ passage, senses, loading, onAdd, onEdit, onPassage, onSense, onOpenSense, onError, notify }: { passage?: Passage; senses: Sense[]; loading: boolean; onAdd: () => void; onEdit: () => void; onPassage: (p: Passage) => void; onSense: (s: Sense) => void; onOpenSense: (id: string) => void; onError: (e: unknown) => void; notify: Notify }) {
+  const [tab, setTab] = useState<SceneTab>("read"); const [failed, setFailed] = useState<{ version: string; message: string } | null>(null);
+  const started = useRef(new Set<string>());
+  const version = passage ? `${passage.id}:${passage.updatedAt}` : "";
+  // DeepSeek marks the fixed expressions once per version of a text: right after
+  // it is saved, or the first time a text saved before this existed is opened.
+  const findPhrases = useCallback((target: Passage, key: string) => {
+    started.current.add(key);
+    request<{ passage: Passage }>("passagePhrases", { passageId: target.id }).then(result => onPassage(result.passage), (err: unknown) => {
+      if (err instanceof ApiError && err.code === "auth") onError(err);
+      setFailed({ version: key, message: err instanceof Error ? err.message : "没有识别出词组，请重试。" });
+    });
+  }, [onPassage, onError]);
+  useEffect(() => { if (passage && !passage.phrases && !started.current.has(version)) findPhrases(passage, version); }, [passage, version, findPhrases]);
   if (!passage) return <section className="lesson-card practice-card scene-empty"><div className="practice-empty"><span className="large-practice-icon"><Music2 size={32} strokeWidth={1.3} /></span><h3>放进一首你想唱会的歌。</h3><p>粘贴歌词或任何英文文本。读的时候，轻点生词，<br />按它所在的句子收进单词本；写的时候，随机挖空，<br />帮你把它记下来。</p><button className="primary-button" disabled={loading} onClick={onAdd}><Plus size={16} />添加第一段文本</button></div></section>;
   const { lines, words } = stats(passage);
   const gathered = senses.filter(sense => sense.materials.some(item => item.source === passage.title)).length;
   return <>
     <section className="word-header scene-header"><div><div className="eyebrow word-eyebrow"><span className="little-dash" />REAL WORDS, REAL CONTEXT</div><div className="word-title-row"><h1>{passage.title}</h1>{passage.author && <span className="word-pronunciation">{passage.author}</span>}</div><div className="word-meaning"><span className="pos-tag">{lines} 行 · {words} 词</span><span>{gathered ? `已从这里收集 ${gathered} 个词义` : "轻点单词，按这一句的意思收进单词本"}</span></div></div><button className="text-button scene-edit" onClick={onEdit}><PenLine size={14} />编辑文本</button></section>
     <div className="skills-tabs" role="tablist" aria-label="练习方式">{TABS.map(({ id, title, en, icon: Icon }) => { const soon = id === "listen" || id === "speak"; return <button key={id} role="tab" aria-selected={tab === id} disabled={soon} title={soon ? "暂未开放" : undefined} className={`skill-tab ${tab === id ? "active" : ""}`} onClick={() => { if (!soon) setTab(id as SceneTab); }}><Icon size={18} /><span>{title}</span><small>{en}</small>{soon && <em>即将开放</em>}</button>; })}<span className="tab-end"><span />先读懂，再记住</span></div>
-    <div role="tabpanel">{tab === "read" ? <PassageReading key={passage.id} passage={passage} onSense={onSense} onOpenSense={onOpenSense} onError={onError} notify={notify} /> : <PassageCloze key={`${passage.id}-${passage.updatedAt}`} passage={passage} />}</div>
+    <div role="tabpanel">{tab === "read" ? <PassageReading key={passage.id} passage={passage} phraseError={failed?.version === version ? failed.message : undefined} onRetryPhrases={() => { setFailed(null); findPhrases(passage, version); }} onSense={onSense} onOpenSense={onOpenSense} onError={onError} notify={notify} /> : <PassageCloze key={`${passage.id}-${passage.updatedAt}`} passage={passage} />}</div>
   </>;
 }
 
@@ -63,7 +75,7 @@ export function PassageEditor({ passage, close, onSaved, onDeleted, onError }: {
     <label className="field-label" htmlFor="passage-title">标题</label><input id="passage-title" value={title} onChange={event => setTitle(event.target.value)} placeholder="例如：Man in the Mirror" maxLength={80} required disabled={!!busy} autoComplete="off" />
     <label className="field-label" htmlFor="passage-author">作者或来源<span>可选</span></label><input id="passage-author" value={author} onChange={event => setAuthor(event.target.value)} placeholder="例如：Michael Jackson" maxLength={80} disabled={!!busy} autoComplete="off" />
     <label className="field-label" htmlFor="passage-text">英文文本<span>{text.length} / 5000</span></label><textarea id="passage-text" className="passage-input" value={text} onChange={event => setText(event.target.value)} placeholder={"[Verse 1]\nPaste the lyrics here, one line per line…"} rows={12} maxLength={5000} required disabled={!!busy} spellCheck={false} />
-    <p className="settings-help"><Info size={15} />单独一行的 [Chorus]、[Verse 1] 会作为段落标记。重复出现的歌词行，在填空练习里只挖一次。</p>
+    <p className="settings-help"><Info size={15} />单独一行的 [Chorus]、[Verse 1] 会作为段落标记。重复出现的歌词行，在填空练习里只挖一次。保存后，DeepSeek 会先标出其中的词组和固定搭配，阅读时点它们会整体查询。</p>
     {error && <p className="inline-error" role="alert">{error}</p>}
     <button className="primary-button full-width" type="submit" disabled={!!busy || !title.trim() || !text.trim()}>{busy === "save" ? <Loading label="保存中" /> : <>保存文本 <Check size={15} /></>}</button>
     {passage && <button type="button" className={`text-button passage-delete ${confirming ? "confirming" : ""}`} disabled={!!busy} onClick={() => void remove()}>{busy === "delete" ? <Loading label="删除中" /> : <><Trash2 size={14} />{confirming ? "再点一次，确认删除（已收进单词本的词会保留）" : "删除这段文本"}</>}</button>}

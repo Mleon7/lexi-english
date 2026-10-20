@@ -3,7 +3,7 @@ import { AppError, input, record, modelText, normalize, dictationScore, chooseWe
 import { generate, speech, speechVoices } from "./providers";
 import { speechConfiguration } from "./speech-config";
 import { database, bucket, settings, getSense, listSenses, publicSense, exercise, createExercise, updateMaterials, getPassage, publicPassage, type SenseRow, type ExerciseRow } from "./store";
-import { isSectionLine } from "../cloze";
+import { isSectionLine, parsePassage, phraseSpans, type PassagePhrase } from "../cloze";
 
 const kinds: MaterialKind[] = ["description", "example", "synonym", "antonym"];
 const WORD_OR_PHRASE = /^[a-z]+(?:[ '\-][a-z]+)*$/i;
@@ -29,6 +29,7 @@ function getMaterial(sense: Sense, id: string): Material {
 }
 function data(row: ExerciseRow) { return record(JSON.parse(row.data)); }
 function requireStage(row: ExerciseRow, stage: string) { if (row.stage !== stage) throw new AppError("这一步已完成，或尚未解锁。请开始下一次练习。", 409, "STAGE_MISMATCH"); }
+const phraseInstruction = 'A learner is about to read an authentic English text, often song lyrics, and wants every multi-word expression that has to be learned as ONE unit marked in advance, so that tapping it looks up the whole expression instead of a single word. Mark phrasal verbs (give up, come across, pick it up), idioms (break the ice, under the weather), and fixed phrases or strong collocations whose meaning or form is not obvious from the single words (make sense, at least, all of a sudden, fall in love, take care of). Skip free combinations that simply add up word by word (the river, go home, very good, in the morning), and skip names and titles. Return {"phrases":[{"line":"integer index into lines","text":"the expression copied exactly from that line, 2-6 consecutive words; when an object splits a phrasal verb, cover the whole stretch (pick it up)","phrase":"dictionary form in lowercase (came across→come across, makin\' it→make it, broke my heart→break someone\'s heart)"}]}. Expressions in one line must not overlap. A line that repeats in the text is listed once. Use neighbouring lines for context. Return {"phrases":[]} when there are none.';
 const materialInstruction = 'Each material is {"text":"English sentence or description","term":"related English word ONLY for synonym/antonym","relationNote":"short Chinese explanation of relation ONLY for synonym/antonym"}. All content must use ONLY the selected meaning. Synonym/antonym text must be a natural example USING that related term. If a direct antonym or exact synonym does not exist, choose a useful contextual contrast/near synonym and explicitly explain in relationNote that it is contextual, not a strict antonym/synonym.';
 
 async function createLesson(config: Settings, sense: Sense): Promise<Material[]> {
@@ -81,7 +82,8 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
     const title = input(body.title, "标题", 80), author = typeof body.author === "string" && body.author.trim() ? input(body.author, "作者或来源", 80) : "", text = passageText(body.text), now = Date.now();
     if (body.passageId !== undefined) {
       const id = input(body.passageId, "文本编号", 80);
-      const saved = await database().prepare("UPDATE passages SET title=?,author=?,text=?,updated_at=? WHERE id=? AND user_id=?").bind(title, author, text, now, id, userId).run();
+      // Phrases found for the old text are dropped only when the text itself changed.
+      const saved = await database().prepare("UPDATE passages SET title=?,author=?,phrases=CASE WHEN text=? THEN phrases ELSE NULL END,text=?,updated_at=? WHERE id=? AND user_id=?").bind(title, author, text, text, now, id, userId).run();
       if (!saved.meta.changes) throw new AppError("没有找到这段文本。", 404, "NOT_FOUND");
       return { passage: publicPassage(await getPassage(userId, id)) };
     }
@@ -90,6 +92,27 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
     const id = crypto.randomUUID();
     await database().prepare("INSERT INTO passages (id,user_id,title,author,text,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id, userId, title, author, text, now, now).run();
     return { passage: publicPassage(await getPassage(userId, id)) };
+  }
+
+  if (name === "passagePhrases") {
+    // Runs once per version of a text. Each repeated line is sent once, and an
+    // expression is kept only when it is really found in its line.
+    const row = await getPassage(userId, input(body.passageId, "文本编号", 80));
+    const lines = [...new Set(parsePassage(row.text).filter(line => line.kind === "text").map(line => line.text))];
+    const found = await generate(config, phraseInstruction, { title: row.title, lines }, { maxTokens: 4000, temperature: 0.2, timeout: 90000 });
+    if (!Array.isArray(found.phrases)) throw new AppError("没有识别出词组，请重试。", 502, "INVALID_MODEL_OUTPUT");
+    const phrases: PassagePhrase[] = [], seen = new Set<string>();
+    for (const value of found.phrases) {
+      const item = value && typeof value === "object" ? value as Record<string, unknown> : {};
+      const line = Number.isInteger(item.line) ? lines[item.line as number] : undefined, phrase = typeof item.phrase === "string" ? item.phrase.trim().toLowerCase() : "";
+      if (!line || typeof item.text !== "string" || phrase.length > 60 || !WORD_OR_PHRASE.test(phrase)) continue;
+      const span = phraseSpans(parsePassage(line)[0], [{ text: item.text, phrase }])[0];
+      if (!span || span.text.split(/\s+/).length > 6 || seen.has(`${line}\n${span.text}`)) continue;
+      seen.add(`${line}\n${span.text}`); phrases.push({ line, text: span.text, phrase });
+    }
+    // When the text was edited meanwhile, its new version gets its own analysis.
+    await database().prepare("UPDATE passages SET phrases=? WHERE id=? AND user_id=? AND text=?").bind(JSON.stringify(phrases), row.id, userId, row.text).run();
+    return { passage: publicPassage(await getPassage(userId, row.id)) };
   }
 
   if (name === "passageDelete") {
@@ -121,8 +144,10 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
     const selection = input(body.selection, "选中的内容", 60);
     if (!/[a-z]/i.test(selection) || selection.split(/\s+/).length > 6 || !phraseInLine(line, selection)) throw new AppError("请在这一行里选择一个英文单词或短语（最多 6 个词）。");
     const nearby = (step: number) => { for (let i = index + step; i >= 0 && i < lines.length; i += step) if (lines[i].trim() && !isSectionLine(lines[i])) return lines[i].trim(); return undefined; };
-    const source = { selection, line, previousLine: nearby(-1), nextLine: nearby(1) };
-    const found = await generate(config, `A learner tapped a word or selected a phrase in one line of an authentic English text, often song lyrics. Work out what the selection means IN THIS LINE. Return {"word":"dictionary form of the selection in lowercase (starting→start, went→go, makin'→make, children→child); keep several words only when they form a real phrase or idiom","senses":[${senseShape}],"contextIndex":"integer index in senses of the meaning used in this line"}. senses lists the common DISTINCT meanings of word, usually 2-6, maximum 8, and MUST contain the meaning used in this line; if that use is figurative, slang, or idiomatic, describe it as its own sense instead of forcing a literal one. previousLine and nextLine are only for disambiguation. If the selection is not an English word or phrase, return {"senses":[],"error":"Chinese explanation"}.`, source);
+    // A tap on an expression marked when the text was saved looks up the whole expression.
+    const phrase = passage.phrases?.find(item => item.line === line && normalize(item.text) === normalize(selection))?.phrase;
+    const source = { selection, line, previousLine: nearby(-1), nextLine: nearby(1), phrase };
+    const found = await generate(config, `A learner tapped a word or selected a phrase in one line of an authentic English text, often song lyrics. Work out what the selection means IN THIS LINE. Return {"word":"dictionary form of the selection in lowercase (starting→start, went→go, makin'→make, children→child); keep several words only when they form a real phrase or idiom","senses":[${senseShape}],"contextIndex":"integer index in senses of the meaning used in this line"}. senses lists the common DISTINCT meanings of word, usually 2-6, maximum 8, and MUST contain the meaning used in this line; if that use is figurative, slang, or idiomatic, describe it as its own sense instead of forcing a literal one. previousLine and nextLine are only for disambiguation. If phrase is given, the selection was marked beforehand as that fixed expression: use phrase as word and give the senses of the whole expression. If the selection is not an English word or phrase, return {"senses":[],"error":"Chinese explanation"}.`, source);
     if (!Array.isArray(found.senses) || !found.senses.length) throw new AppError(typeof found.error === "string" && found.error.trim() ? found.error.trim().slice(0, 200) : "没有识别出这个英文单词，请换一个试试。");
     const word = modelText(found.word, 60).toLowerCase();
     if (!WORD_OR_PHRASE.test(word)) throw new AppError("没有识别出这个英文单词，请换一个试试。", 502, "INVALID_MODEL_OUTPUT");

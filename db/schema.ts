@@ -52,6 +52,8 @@ export const passages = sqliteTable("passages", {
   title: text("title").notNull(),
   author: text("author").notNull().default(""),
   text: text("text").notNull(),
+  // JSON list of fixed expressions; NULL until the current text has been analysed.
+  phrases: text("phrases"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 }, table => [index("passages_user_created_idx").on(table.userId, table.createdAt)]);

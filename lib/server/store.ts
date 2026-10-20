@@ -24,9 +24,9 @@ export async function listSenses(userId: string, learnedOnly = true): Promise<Se
   const result = await database().prepare(`SELECT * FROM senses WHERE user_id = ? ${learnedOnly ? "AND learned = 1" : ""} ORDER BY created_at ASC LIMIT 3000`).bind(userId).all<SenseRow>();
   return result.results.map(publicSense);
 }
-export type PassageRow = { id: string; user_id: string; title: string; author: string; text: string; created_at: number; updated_at: number };
+export type PassageRow = { id: string; user_id: string; title: string; author: string; text: string; phrases: string | null; created_at: number; updated_at: number };
 export function publicPassage(row: PassageRow): Passage {
-  return { id: row.id, title: row.title, author: row.author, text: row.text, createdAt: row.created_at, updatedAt: row.updated_at };
+  return { id: row.id, title: row.title, author: row.author, text: row.text, phrases: row.phrases === null ? null : JSON.parse(row.phrases), createdAt: row.created_at, updatedAt: row.updated_at };
 }
 export async function getPassage(userId: string, id: string): Promise<PassageRow> {
   const row = await database().prepare("SELECT * FROM passages WHERE id = ? AND user_id = ?").bind(id, userId).first<PassageRow>();
