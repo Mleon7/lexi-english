@@ -45,3 +45,13 @@ export const requestLimits = sqliteTable("request_limits", {
   count: integer("count").notNull().default(0),
   expiresAt: integer("expires_at").notNull(),
 });
+
+export const passages = sqliteTable("passages", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  title: text("title").notNull(),
+  author: text("author").notNull().default(""),
+  text: text("text").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, table => [index("passages_user_created_idx").on(table.userId, table.createdAt)]);

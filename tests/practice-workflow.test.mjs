@@ -24,7 +24,7 @@ async function harness(options = {}) {
   };
   const materials = [{ id: 'description', kind: 'description', text: 'Very careful about details.' }, { id: 'example', kind: 'example', text: 'She was meticulous about her desk.' }, { id: 'synonym', kind: 'synonym', text: 'He was careful with the cup.' }];
   db.prepare('INSERT INTO senses(id,user_id,word,phonetic,pos,meaning,definition,learned,mastery,review_count,materials,created_at,updated_at) VALUES(?,?,?,?,?,?,?,1,0,0,?,1,1)').run('sense-a', 'tester', 'meticulous', '', 'adj.', '一丝不苟的', 'Very careful about every detail.', JSON.stringify(materials));
-  const calls = []; let next = {};
+  const calls = []; let replies = [{}];
   const audio = new Map(), speechCalls = [];
   const env = { DB: adapter, ...options, BUCKET: {
     async head(key) { return audio.get(key) || null; },
@@ -33,7 +33,8 @@ async function harness(options = {}) {
   const context = vm.createContext({ console, crypto: webcrypto, TextEncoder, Uint8Array, atob });
   const envModule = new vm.SyntheticModule(['env'], function () { this.setExport('env', env); }, { context });
   const providers = new vm.SyntheticModule(['generate', 'speech', 'generateImage', 'speechVoices'], function () {
-    this.setExport('generate', async (_settings, instruction, data) => { calls.push({ instruction, data }); return next; });
+    // set(a, b) answers successive model calls in order; the last reply repeats.
+    this.setExport('generate', async (_settings, instruction, data) => { calls.push({ instruction, data }); return replies.length > 1 ? replies.shift() : replies[0]; });
     this.setExport('speech', async (...args) => { speechCalls.push(args); return new Uint8Array([1, 2, 3]); });
     this.setExport('generateImage', async () => { throw new Error('Unexpected image generation'); });
     this.setExport('speechVoices', () => env.TTS_PROVIDER === 'qwen3' ? ['Ryan', 'Aiden', 'Serena', 'Vivian'].map(name => ({ id: 'qwen3:' + name, label: name })) : [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }]);
@@ -47,7 +48,7 @@ async function harness(options = {}) {
   const service = load(path.join(root, 'lib/server/service.ts'));
   await service.link((specifier, parent) => specifier === 'cloudflare:workers' ? envModule : specifier === './providers' ? providers : load(path.resolve(path.dirname(parent.identifier), specifier + '.ts')));
   await service.evaluate();
-  return { db, calls, audio, speechCalls, env, set(value) { next = value; }, action: body => service.namespace.action('tester', body) };
+  return { db, calls, audio, speechCalls, env, set(...values) { replies = values; }, action: body => service.namespace.action('tester', body) };
 }
 
 test('switching speech provider uses local voices and WAV cache, retaining MiniMax settings and audio', async () => {
@@ -167,3 +168,62 @@ test('listening recovers voices from older attempts and isolates user, sense, ma
     assert.deepEqual(JSON.parse(JSON.stringify(session.voices)), savedVoices);
   } finally { h.db.close(); }
 });
+
+const lesson = { description: { text: 'To begin doing something.' }, examples: [{ text: 'We start work at nine.' }, { text: 'She started to laugh.' }, { text: 'Let us start again.' }], synonym: { text: 'They began the meeting.', term: 'begin', relationNote: '近义' }, antonym: { text: 'They stopped the meeting.', term: 'stop', relationNote: '反义' } };
+const lyric = '[Verse 1]\nI\'m startin\' with the river\nI\'m startin\' with the river\n\n[Chorus]\nStart the long road home';
+
+test('passages are normalised, listed per user, edited, and deleted', async () => {
+  const h = await harness();
+  try {
+    const { passage } = await h.action({ action: 'passageSave', title: 'River Song', author: '  ', text: 'Line one  \r\n\r\n\r\n\r\nLine two' });
+    assert.equal(passage.text, 'Line one\n\nLine two'); assert.equal(passage.author, '');
+    await assert.rejects(h.action({ action: 'passageSave', title: 'Empty', text: '你好' }), e => e.code === 'INVALID_INPUT');
+    const edited = await h.action({ action: 'passageSave', passageId: passage.id, title: 'River Song', author: 'Someone', text: lyric });
+    assert.equal(edited.passage.author, 'Someone'); assert.equal(edited.passage.text, lyric);
+    await assert.rejects(h.action({ action: 'passageSave', passageId: 'missing', title: 'x', text: 'words' }), e => e.code === 'NOT_FOUND');
+    h.db.prepare("INSERT INTO passages(id,user_id,title,author,text,created_at,updated_at) VALUES('theirs','someone-else','Private','','secret words',1,1)").run();
+    await assert.rejects(h.action({ action: 'passageDelete', passageId: 'theirs' }), e => e.code === 'NOT_FOUND');
+    await h.action({ action: 'passageDelete', passageId: passage.id });
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM passages WHERE user_id='tester'").get().n, 0);
+  } finally { h.db.close(); }
+});
+
+test('a word picked from a lyric line resolves its sense from that line and keeps the line as an example', async () => {
+  const h = await harness();
+  try {
+    const { passage } = await h.action({ action: 'passageSave', title: 'River Song', text: lyric });
+    const line = "I'm startin' with the river";
+    await assert.rejects(h.action({ action: 'passageLookup', passageId: passage.id, line, selection: 'road' }), e => e.code === 'INVALID_INPUT');
+    await assert.rejects(h.action({ action: 'passageLookup', passageId: passage.id, line: 'Not in the song', selection: 'song' }), e => e.code === 'LINE_CHANGED');
+    h.set({ word: 'start', contextIndex: 1, senses: [{ pos: 'v.', meaning: '启动（机器）', definition: 'To make a machine begin working.' }, { pos: 'v.', meaning: '开始', definition: 'To begin doing something.' }] });
+    const found = await h.action({ action: 'passageLookup', passageId: passage.id, line, selection: 'startin' });
+    assert.equal(found.sense.word, 'start'); assert.equal(found.sense.meaning, '开始'); assert.equal(found.sense.learned, false); assert.equal(found.collected, false);
+    assert.deepEqual(JSON.parse(JSON.stringify(h.calls[0].data)), { selection: 'startin', line, nextLine: "I'm startin' with the river" });
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM senses WHERE word='start'").get().n, 2);
+
+    h.set(lesson);
+    const added = await h.action({ action: 'passageAdd', passageId: passage.id, line, senseId: found.sense.id });
+    assert.equal(added.sense.learned, true);
+    const quotes = added.sense.materials.filter(item => item.source);
+    assert.deepEqual(JSON.parse(JSON.stringify(quotes.map(item => [item.kind, item.text, item.source]))), [['example', line, 'River Song']]);
+    assert.equal(added.sense.materials.length, 7);
+    const again = await h.action({ action: 'passageAdd', passageId: passage.id, line, senseId: found.sense.id });
+    assert.equal(again.sense.materials.length, 7); assert.equal(h.calls.length, 2);
+
+    // A known word asks the model to match the saved senses instead of adding duplicates.
+    h.set({ word: 'start', contextIndex: 0, senses: [{ pos: 'v.', meaning: '开始', definition: 'To begin.' }] }, { matchId: found.sense.id, sense: null });
+    const known = await h.action({ action: 'passageLookup', passageId: passage.id, line: 'Start the long road home', selection: 'Start' });
+    assert.equal(known.sense.id, found.sense.id); assert.equal(known.collected, false);
+    assert.equal(h.calls[3].data.senses.length, 2);
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM senses WHERE word='start'").get().n, 2);
+    const second = await h.action({ action: 'passageAdd', passageId: passage.id, line: 'Start the long road home', senseId: found.sense.id });
+    assert.equal(second.sense.materials.filter(item => item.source).length, 2); assert.equal(h.calls.length, 4);
+    h.set({ word: 'start', contextIndex: 0, senses: [{ pos: 'v.', meaning: '开始', definition: 'To begin.' }] }, { matchId: found.sense.id, sense: null });
+    assert.equal((await h.action({ action: 'passageLookup', passageId: passage.id, line, selection: 'startin' })).collected, true);
+
+    h.set({ word: 'start', contextIndex: 0, senses: [{ pos: 'v.', meaning: '开始', definition: 'To begin.' }] }, { matchId: null, sense: { pos: 'n.', meaning: '惊跳', definition: 'A sudden movement of surprise.' } });
+    const fresh = await h.action({ action: 'passageLookup', passageId: passage.id, line, selection: 'startin' });
+    assert.equal(fresh.sense.meaning, '惊跳'); assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM senses WHERE word='start'").get().n, 3);
+  } finally { h.db.close(); }
+});
+

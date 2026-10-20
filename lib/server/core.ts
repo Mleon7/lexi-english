@@ -1,13 +1,14 @@
 export type MaterialKind = "description" | "example" | "synonym" | "antonym";
 export type Material = {
   id: string; kind: MaterialKind; text: string; term?: string; relationNote?: string;
-  translation?: string;
+  translation?: string; source?: string;
   scene?: { title: string; description: string; imageUrl?: string; objectKey?: string; mimeType?: string; model?: string; emoji?: string; background?: string; foreground?: string };
 };
 export type Sense = {
   id: string; word: string; phonetic: string; pos: string; meaning: string; definition: string;
   learned: boolean; mastery: number; reviewCount: number; createdAt: number; materials: Material[];
 };
+export type Passage = { id: string; title: string; author: string; text: string; createdAt: number; updatedAt: number };
 export type Settings = { textModel: string; voiceModel: string; speechProvider: "minimax" | "qwen3" };
 export type Feedback = { appropriate: boolean; score: number; scenarioFeedback: string; grammarFeedback: string; improvedSentence: string };
 
@@ -35,6 +36,18 @@ export function modelText(value: unknown, max = 1600): string {
 }
 export function normalize(value: string): string {
   return value.toLowerCase().replace(/[’‘]/g, "'").replace(/[^\p{L}\p{N}'\s]/gu, " ").replace(/\s+/g, " ").trim();
+}
+// Stored passages keep line breaks; repeated blank lines collapse to one stanza break.
+export function passageText(value: unknown): string {
+  const text = input(value, "文本", 5000).replace(/\r\n?/g, "\n").split("\n").map(line => line.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n");
+  if (!/[a-z]/i.test(text)) throw new AppError("文本需要包含英文内容。");
+  if (text.split("\n").length > 400) throw new AppError("文本最多 400 行，可以分成几段保存。");
+  return text;
+}
+// Whole-word match that ignores case, punctuation, and apostrophes at word edges (makin').
+export function phraseInLine(line: string, phrase: string): boolean {
+  const key = (value: string) => normalize(value).replace(/(^|\s)'+|'+(?=\s|$)/g, "$1");
+  return !!key(phrase) && ` ${key(line)} `.includes(` ${key(phrase)} `);
 }
 export function dictationScore(answer: string, original: string): number {
   const a = normalize(answer).split(" ");

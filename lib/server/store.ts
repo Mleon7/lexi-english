@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { AppError, type Sense, type Settings } from "./core";
+import { AppError, type Passage, type Sense, type Settings } from "./core";
 import { speechConfiguration } from "./speech-config";
 
 export function database(): D1Database {
@@ -23,6 +23,19 @@ export async function getSense(userId: string, id: string): Promise<SenseRow> {
 export async function listSenses(userId: string, learnedOnly = true): Promise<Sense[]> {
   const result = await database().prepare(`SELECT * FROM senses WHERE user_id = ? ${learnedOnly ? "AND learned = 1" : ""} ORDER BY created_at ASC LIMIT 3000`).bind(userId).all<SenseRow>();
   return result.results.map(publicSense);
+}
+export type PassageRow = { id: string; user_id: string; title: string; author: string; text: string; created_at: number; updated_at: number };
+export function publicPassage(row: PassageRow): Passage {
+  return { id: row.id, title: row.title, author: row.author, text: row.text, createdAt: row.created_at, updatedAt: row.updated_at };
+}
+export async function getPassage(userId: string, id: string): Promise<PassageRow> {
+  const row = await database().prepare("SELECT * FROM passages WHERE id = ? AND user_id = ?").bind(id, userId).first<PassageRow>();
+  if (!row) throw new AppError("没有找到这段文本。", 404, "NOT_FOUND");
+  return row;
+}
+export async function listPassages(userId: string): Promise<Passage[]> {
+  const result = await database().prepare("SELECT * FROM passages WHERE user_id = ? ORDER BY created_at DESC LIMIT 200").bind(userId).all<PassageRow>();
+  return result.results.map(publicPassage);
 }
 export async function settings(userId: string): Promise<Settings> {
   const row = await database().prepare("SELECT text_model, voice_model FROM user_settings WHERE user_id = ?").bind(userId).first<{ text_model: string; voice_model: string }>();

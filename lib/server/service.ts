@@ -1,11 +1,23 @@
 import { illustrate } from "./illustration";
-import { AppError, input, record, modelText, normalize, dictationScore, chooseWeighted, isCopied, shuffled, validateFeedback, type Material, type MaterialKind, type Sense, type Settings } from "./core";
+import { AppError, input, record, modelText, normalize, dictationScore, chooseWeighted, isCopied, shuffled, validateFeedback, passageText, phraseInLine, type Material, type MaterialKind, type Sense, type Settings } from "./core";
 import { generate, speech, speechVoices } from "./providers";
 import { speechConfiguration } from "./speech-config";
-import { database, bucket, settings, getSense, listSenses, publicSense, exercise, createExercise, updateMaterials, type SenseRow, type ExerciseRow } from "./store";
+import { database, bucket, settings, getSense, listSenses, publicSense, exercise, createExercise, updateMaterials, getPassage, publicPassage, type SenseRow, type ExerciseRow } from "./store";
+import { isSectionLine } from "../cloze";
 
 const kinds: MaterialKind[] = ["description", "example", "synonym", "antonym"];
+const WORD_OR_PHRASE = /^[a-z]+(?:[ '\-][a-z]+)*$/i;
+const senseShape = '{"phonetic":"IPA","pos":"part of speech abbreviation","meaning":"concise Chinese meaning","definition":"clear short English definition"}';
 function context(sense: Sense) { return { word: sense.word, pos: sense.pos, meaning: sense.meaning, definition: sense.definition }; }
+function senseFields(value: unknown) {
+  const item = record(value);
+  return { phonetic: typeof item.phonetic === "string" ? item.phonetic.slice(0, 100) : "", pos: modelText(item.pos, 60), meaning: modelText(item.meaning, 300), definition: modelText(item.definition, 700) };
+}
+type NewSense = ReturnType<typeof senseFields> & { id: string; word: string; createdAt: number };
+async function insertSenses(userId: string, rows: NewSense[]) {
+  const now = Date.now();
+  await database().batch(rows.map(row => database().prepare("INSERT INTO senses (id,user_id,word,phonetic,pos,meaning,definition,learned,mastery,review_count,materials,created_at,updated_at) VALUES (?,?,?,?,?,?,?,0,0,0,'[]',?,?)").bind(row.id, userId, row.word, row.phonetic, row.pos, row.meaning, row.definition, row.createdAt, now)));
+}
 function material(value: unknown, kind: MaterialKind): Material {
   const item = record(value);
   return { id: crypto.randomUUID(), kind, text: modelText(item.text, 1000), ...(typeof item.term === "string" && item.term.trim() ? { term: modelText(item.term, 100) } : {}), ...(typeof item.relationNote === "string" && item.relationNote.trim() ? { relationNote: modelText(item.relationNote, 500) } : {}) };
@@ -18,6 +30,12 @@ function getMaterial(sense: Sense, id: string): Material {
 function data(row: ExerciseRow) { return record(JSON.parse(row.data)); }
 function requireStage(row: ExerciseRow, stage: string) { if (row.stage !== stage) throw new AppError("这一步已完成，或尚未解锁。请开始下一次练习。", 409, "STAGE_MISMATCH"); }
 const materialInstruction = 'Each material is {"text":"English sentence or description","term":"related English word ONLY for synonym/antonym","relationNote":"short Chinese explanation of relation ONLY for synonym/antonym"}. All content must use ONLY the selected meaning. Synonym/antonym text must be a natural example USING that related term. If a direct antonym or exact synonym does not exist, choose a useful contextual contrast/near synonym and explicitly explain in relationNote that it is contextual, not a strict antonym/synonym.';
+
+async function createLesson(config: Settings, sense: Sense): Promise<Material[]> {
+  const result = await generate(config, 'Create a complete lesson. Return {"description":{"text":"one English explanation"},"examples":[{"text":"example 1"},{"text":"example 2"},{"text":"example 3"}],"synonym":{...},"antonym":{...}}. Include EXACTLY three different useful examples. ' + materialInstruction, context(sense));
+  if (!Array.isArray(result.examples) || result.examples.length !== 3) throw new AppError("学习材料不完整，请重新生成。", 502, "INVALID_MODEL_OUTPUT");
+  return [material(result.description, "description"), ...result.examples.map(item => material(item, "example")), material(result.synonym, "synonym"), material(result.antonym, "antonym")];
+}
 
 async function generateScenario(config: Settings, sense: Sense, previous?: string): Promise<string> {
   const result = await generate(config, 'Return {"scenario":"English practical scenario, 2 short sentences, asking learner to write one NEW English sentence using target word in the specified meaning. Do not provide a model answer."}. Make the scenario concrete, varied, and naturally suited to that meaning. If previousScenario exists, make a distinctly DIFFERENT situation.', { ...context(sense), previousScenario: previous });
@@ -48,27 +66,94 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
 
   if (name === "lookup") {
     const word = input(body.word, "单词", 60).toLowerCase();
-    if (!/^[a-z]+(?:[ '\-][a-z]+)*$/i.test(word)) throw new AppError("请输入英文单词或短语。");
+    if (!WORD_OR_PHRASE.test(word)) throw new AppError("请输入英文单词或短语。");
     const previous = await database().prepare("SELECT * FROM senses WHERE user_id = ? AND word = ? ORDER BY created_at").bind(userId, word).all<SenseRow>();
     if (previous.results.length) return { senses: previous.results.map(publicSense) };
-    const result = await generate(config, 'For the English word or phrase, list its common DISTINCT meanings, usually 2-6, maximum 8. Do not invent meanings; a monosemous word may have 1. Return {"senses":[{"phonetic":"IPA","pos":"part of speech abbreviation","meaning":"concise Chinese meaning","definition":"clear short English definition"}]}. If input is not a real English word/phrase, return {"senses":[],"error":"Chinese explanation"}.', { word });
+    const result = await generate(config, `For the English word or phrase, list its common DISTINCT meanings, usually 2-6, maximum 8. Do not invent meanings; a monosemous word may have 1. Return {"senses":[${senseShape}]}. If input is not a real English word/phrase, return {"senses":[],"error":"Chinese explanation"}.`, { word });
     if (!Array.isArray(result.senses) || !result.senses.length) throw new AppError("没有识别到常见英语词义，请检查拼写后重试。");
     const now = Date.now();
-    const rows = result.senses.slice(0, 8).map((value, index) => {
-      const item = record(value);
-      return { id: crypto.randomUUID(), word, phonetic: typeof item.phonetic === "string" ? item.phonetic.slice(0, 100) : "", pos: modelText(item.pos, 60), meaning: modelText(item.meaning, 300), definition: modelText(item.definition, 700), createdAt: now + index };
-    });
-    await database().batch(rows.map(row => database().prepare("INSERT INTO senses (id,user_id,word,phonetic,pos,meaning,definition,learned,mastery,review_count,materials,created_at,updated_at) VALUES (?,?,?,?,?,?,?,0,0,0,'[]',?,?)").bind(row.id, userId, row.word, row.phonetic, row.pos, row.meaning, row.definition, row.createdAt, now)));
+    const rows = result.senses.slice(0, 8).map((value, index) => ({ id: crypto.randomUUID(), word, ...senseFields(value), createdAt: now + index }));
+    await insertSenses(userId, rows);
     return { senses: rows };
+  }
+
+  if (name === "passageSave") {
+    const title = input(body.title, "标题", 80), author = typeof body.author === "string" && body.author.trim() ? input(body.author, "作者或来源", 80) : "", text = passageText(body.text), now = Date.now();
+    if (body.passageId !== undefined) {
+      const id = input(body.passageId, "文本编号", 80);
+      const saved = await database().prepare("UPDATE passages SET title=?,author=?,text=?,updated_at=? WHERE id=? AND user_id=?").bind(title, author, text, now, id, userId).run();
+      if (!saved.meta.changes) throw new AppError("没有找到这段文本。", 404, "NOT_FOUND");
+      return { passage: publicPassage(await getPassage(userId, id)) };
+    }
+    const count = await database().prepare("SELECT COUNT(*) AS count FROM passages WHERE user_id=?").bind(userId).first<{ count: number }>();
+    if ((count?.count || 0) >= 200) throw new AppError("最多保存 200 段文本，请先删除不再需要的。");
+    const id = crypto.randomUUID();
+    await database().prepare("INSERT INTO passages (id,user_id,title,author,text,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id, userId, title, author, text, now, now).run();
+    return { passage: publicPassage(await getPassage(userId, id)) };
+  }
+
+  if (name === "passageDelete") {
+    const id = input(body.passageId, "文本编号", 80);
+    const deleted = await database().prepare("DELETE FROM passages WHERE id=? AND user_id=?").bind(id, userId).run();
+    if (!deleted.meta.changes) throw new AppError("没有找到这段文本。", 404, "NOT_FOUND");
+    return { deleted: id };
+  }
+
+  if (name === "passageLookup" || name === "passageAdd") {
+    const passage = publicPassage(await getPassage(userId, input(body.passageId, "文本编号", 80)));
+    const lines = passage.text.split("\n"), line = input(body.line, "所在的行", 600);
+    const index = lines.findIndex(item => item.trim() === line);
+    if (index < 0) throw new AppError("这一行已不在文本中，请刷新后重试。", 409, "LINE_CHANGED");
+    const collected = (sense: Sense) => sense.materials.some(item => normalize(item.text) === normalize(line));
+    if (name === "passageAdd") {
+      // The original line becomes an example, so the word keeps the story it came from.
+      const sense = publicSense(await getSense(userId, input(body.senseId, "词义编号", 80)));
+      const lesson = sense.learned && sense.materials.length ? undefined : await createLesson(config, sense);
+      const quote: Material = { id: crypto.randomUUID(), kind: "example", text: line, source: passage.title };
+      const updated = await updateMaterials(userId, sense.id, current => {
+        const materials = current.learned && current.materials.length ? current.materials : lesson ?? current.materials;
+        if (collected({ ...current, materials })) return materials;
+        if (materials.length >= 80) throw new AppError("这个词义已有 80 条材料，无法再收录原句。");
+        return [...materials, quote];
+      });
+      return { sense: updated, collected: true };
+    }
+    const selection = input(body.selection, "选中的内容", 60);
+    if (!/[a-z]/i.test(selection) || selection.split(/\s+/).length > 6 || !phraseInLine(line, selection)) throw new AppError("请在这一行里选择一个英文单词或短语（最多 6 个词）。");
+    const nearby = (step: number) => { for (let i = index + step; i >= 0 && i < lines.length; i += step) if (lines[i].trim() && !isSectionLine(lines[i])) return lines[i].trim(); return undefined; };
+    const source = { selection, line, previousLine: nearby(-1), nextLine: nearby(1) };
+    const found = await generate(config, `A learner tapped a word or selected a phrase in one line of an authentic English text, often song lyrics. Work out what the selection means IN THIS LINE. Return {"word":"dictionary form of the selection in lowercase (starting→start, went→go, makin'→make, children→child); keep several words only when they form a real phrase or idiom","senses":[${senseShape}],"contextIndex":"integer index in senses of the meaning used in this line"}. senses lists the common DISTINCT meanings of word, usually 2-6, maximum 8, and MUST contain the meaning used in this line; if that use is figurative, slang, or idiomatic, describe it as its own sense instead of forcing a literal one. previousLine and nextLine are only for disambiguation. If the selection is not an English word or phrase, return {"senses":[],"error":"Chinese explanation"}.`, source);
+    if (!Array.isArray(found.senses) || !found.senses.length) throw new AppError(typeof found.error === "string" && found.error.trim() ? found.error.trim().slice(0, 200) : "没有识别出这个英文单词，请换一个试试。");
+    const word = modelText(found.word, 60).toLowerCase();
+    if (!WORD_OR_PHRASE.test(word)) throw new AppError("没有识别出这个英文单词，请换一个试试。", 502, "INVALID_MODEL_OUTPUT");
+    const known = (await database().prepare("SELECT * FROM senses WHERE user_id = ? AND word = ? ORDER BY created_at").bind(userId, word).all<SenseRow>()).results.map(publicSense);
+    let sense: Sense;
+    if (known.length) {
+      // Reuse a saved meaning when it fits, so the word book never holds duplicates.
+      const matched = await generate(config, `The learner already has these senses of word. Decide which one is used in the line. Return {"matchId":"id of the sense used in this line","sense":null}. Only when NO listed sense fits, return {"matchId":null,"sense":${senseShape}} describing the meaning used in this line. A nuance of a listed sense is NOT a new sense.`, { ...source, word, senses: known.map(item => ({ id: item.id, pos: item.pos, meaning: item.meaning, definition: item.definition })) });
+      const match = known.find(item => item.id === matched.matchId);
+      if (match) sense = match;
+      else {
+        const row = { id: crypto.randomUUID(), word, ...senseFields(matched.sense), createdAt: Date.now() };
+        await insertSenses(userId, [row]);
+        sense = publicSense(await getSense(userId, row.id));
+      }
+    } else {
+      const contextIndex = Number(found.contextIndex);
+      if (!Number.isInteger(contextIndex) || contextIndex < 0 || contextIndex >= Math.min(8, found.senses.length)) throw new AppError("没能确定这个词在句中的意思，请重试。", 502, "INVALID_MODEL_OUTPUT");
+      const now = Date.now();
+      const rows = found.senses.slice(0, 8).map((value, position) => ({ id: crypto.randomUUID(), word, ...senseFields(value), createdAt: now + position }));
+      await insertSenses(userId, rows);
+      sense = publicSense(await getSense(userId, rows[contextIndex].id));
+    }
+    return { sense, collected: sense.learned && collected(sense) };
   }
 
   if (["select", "augment", "translate", "illustrate", "writingScenario", "listeningStart"].includes(name)) {
     const sense = publicSense(await getSense(userId, input(body.senseId, "词义编号", 80)));
     if (name === "select") {
       if (sense.learned && sense.materials.length) return { sense };
-      const result = await generate(config, 'Create a complete lesson. Return {"description":{"text":"one English explanation"},"examples":[{"text":"example 1"},{"text":"example 2"},{"text":"example 3"}],"synonym":{...},"antonym":{...}}. Include EXACTLY three different useful examples. ' + materialInstruction, context(sense));
-      if (!Array.isArray(result.examples) || result.examples.length !== 3) throw new AppError("学习材料不完整，请重新生成。", 502, "INVALID_MODEL_OUTPUT");
-      const materials = [material(result.description, "description"), ...result.examples.map(item => material(item, "example")), material(result.synonym, "synonym"), material(result.antonym, "antonym")];
+      const materials = await createLesson(config, sense);
       return { sense: await updateMaterials(userId, sense.id, current => current.learned && current.materials.length ? current.materials : materials) };
     }
     if (!sense.learned) throw new AppError("请先选择词义并生成学习材料。");
