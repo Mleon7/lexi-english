@@ -124,3 +124,10 @@
 .primary-button.danger-button{background:#a3593a}.primary-button.danger-button:hover:not(:disabled){background:#8a4a30}
 .delete-choices{margin-top:0}.delete-choices .radio-indicator{border-radius:5px}.delete-choices .sense-choice.active{background:#fbf4ee;border-color:#e2c6ae}.delete-choices .sense-choice.active .radio-indicator{background:#a3593a;border-color:#a3593a}
 @media(max-width:760px){.frequency-tag{font-size:12px}.word-sort>button{font-size:12px}}
+
+/* Learn keeps Chinese behind hint icons: meanings are shown by their English definitions. */
+.header-definition{max-width:640px;font-size:13px;line-height:1.7;color:#5f6558}
+.sense-item>span:last-child{min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.6}
+.meaning-switch>button>span{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.relation-term{display:flex;align-items:center;gap:6px;margin-bottom:10px}
+@media(max-width:760px){.header-definition{font-size:13px}.meaning-switch>button>span{max-width:200px}}
