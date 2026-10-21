@@ -4,13 +4,13 @@ import { useState } from "react";
 import { ArrowRight, BookOpen, Check, CheckCheck, ChevronRight, Info, Sprout } from "lucide-react";
 import { type Feedback } from "./types";
 import { request } from "./api";
-import { Loading, TranslationHint } from "./shared";
+import { Collected, Loading, TranslationHint } from "./shared";
 
 export type ReviewExercise = { reviewId: string; scenario: string; sentence: string; stage: "blank" };
 
 export type ReviewBlankResult = { correct: boolean; answer?: string; meaning?: string; feedback?: string; word?: string };
 
-export type ReviewSentenceResult = { passed: boolean; feedback: Feedback; mastery: number };
+export type ReviewSentenceResult = { passed: boolean; feedback: Feedback; mastery: number; collected: boolean };
 
 export function Review({ count, onError, onSaved, onAdd }: { count: number; onError: (e: unknown) => void; onSaved: () => void; onAdd: () => void }) {
   const [exercise, setExercise] = useState<ReviewExercise | null>(null);
@@ -42,7 +42,7 @@ export function Review({ count, onError, onSaved, onAdd }: { count: number; onEr
         <div className="success-note"><CheckCheck size={16} />Correct! Now choose your own context.</div><h2>Make a new sentence with <em>{blankResult.word}</em>.</h2>
         <p className="practice-intro">{ownInstruction} <TranslationHint text={ownInstruction} chinese="请自己选择场景，使用刚复习的词义造一个全新的句子，展示你知道何时使用它。允许小的语法错误，但不要照抄例句。" /></p>
         <form onSubmit={e => void write(e)}><label className="field-label" htmlFor="review-sentence">Your original sentence<span>Meaning and context matter most</span></label><textarea id="review-sentence" value={sentence} onChange={e => setSentence(e.target.value)} disabled={!!busy || !!result} rows={4} placeholder="Choose your own situation…" required maxLength={1200} /><div className="form-footer"><span>{sentence.length} / 1200</span><button className="primary-button" type="submit" disabled={!!busy || !sentence.trim() || !!result}>{busy === "sentence" ? <Loading label="Reading your sentence" /> : <>Finish review <Check size={16} /></>}</button></div></form>
-        {result && <><section className={`feedback-card ${result.feedback.appropriate ? "good" : "improve"}`} role="status"><div className="feedback-heading"><span><Sprout size={20} /></span><h3>{result.passed ? "A natural use of the word" : "Keep exploring its meaning"}</h3><b>{result.feedback.score}<small> / 100</small></b></div>{[{ label: "MEANING & YOUR CONTEXT", text: result.feedback.scenarioFeedback }, { label: "GRAMMAR", text: result.feedback.grammarFeedback }, { label: "A REFINED VERSION", text: result.feedback.improvedSentence }].map(part => <div className="feedback-part" key={part.label}><span className="eyebrow">{part.label}</span><p>{part.text} <TranslationHint text={part.text} /></p></div>)}</section><p className="review-outcome"><Sprout size={15} />{result.passed ? "This meaning will appear less often as your confidence grows." : "This meaning will return sooner for more practice."}</p></>}
+        {result && <><section className={`feedback-card ${result.feedback.appropriate ? "good" : "improve"}`} role="status"><div className="feedback-heading"><span><Sprout size={20} /></span><h3>{result.passed ? "A natural use of the word" : "Keep exploring its meaning"}</h3><b>{result.feedback.score}<small> / 100</small></b></div>{[{ label: "MEANING & YOUR CONTEXT", text: result.feedback.scenarioFeedback }, { label: "GRAMMAR", text: result.feedback.grammarFeedback }, { label: "A REFINED VERSION", text: result.feedback.improvedSentence, collected: result.collected }].map(part => <div className="feedback-part" key={part.label}><span className="eyebrow">{part.label}</span><p>{part.text} <TranslationHint text={part.text} /></p>{part.collected && <Collected />}</div>)}</section><p className="review-outcome"><Sprout size={15} />{result.passed ? "This meaning will appear less often as your confidence grows." : "This meaning will return sooner for more practice."}</p></>}
       </>}
       {(result || (blankResult && !blankResult.correct)) && <button className="primary-button next-review" disabled={!!busy} onClick={() => void start()}>{busy === "start" ? <Loading label="Preparing" /> : <>Next word <ArrowRight size={15} /></>}</button>}
     </section>}

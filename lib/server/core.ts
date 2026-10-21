@@ -3,7 +3,7 @@ import type { PassagePhrase } from "../cloze";
 export type MaterialKind = "description" | "example" | "synonym" | "antonym";
 export type Material = {
   id: string; kind: MaterialKind; text: string; term?: string; relationNote?: string;
-  translation?: string; source?: string;
+  translation?: string; source?: string; practice?: "writing" | "review"; exerciseId?: string;
   scene?: { title: string; description: string; imageUrl?: string; objectKey?: string; mimeType?: string; model?: string; emoji?: string; background?: string; foreground?: string };
 };
 export type Sense = {
@@ -24,16 +24,16 @@ export class AppError extends Error {
 
 export function input(value: unknown, label: string, max = 1000): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > max) {
-    throw new AppError(`${label}不能为空，且最多 ${max} 个字符。`);
+    throw new AppError(`${label} is required and can be at most ${max} characters.`);
   }
   return value.trim();
 }
 export function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new AppError("模型返回的内容格式不完整，请重试。", 502, "INVALID_MODEL_OUTPUT");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new AppError("The model's answer was incomplete. Please try again.", 502, "INVALID_MODEL_OUTPUT");
   return value as Record<string, unknown>;
 }
 export function modelText(value: unknown, max = 1600): string {
-  if (typeof value !== "string" || !value.trim() || value.length > max) throw new AppError("模型返回的内容不完整，请重试。", 502, "INVALID_MODEL_OUTPUT");
+  if (typeof value !== "string" || !value.trim() || value.length > max) throw new AppError("The model's answer was incomplete. Please try again.", 502, "INVALID_MODEL_OUTPUT");
   return value.trim();
 }
 export function normalize(value: string): string {
@@ -41,9 +41,9 @@ export function normalize(value: string): string {
 }
 // Stored passages keep line breaks; repeated blank lines collapse to one stanza break.
 export function passageText(value: unknown): string {
-  const text = input(value, "文本", 5000).replace(/\r\n?/g, "\n").split("\n").map(line => line.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n");
-  if (!/[a-z]/i.test(text)) throw new AppError("文本需要包含英文内容。");
-  if (text.split("\n").length > 400) throw new AppError("文本最多 400 行，可以分成几段保存。");
+  const text = input(value, "Text", 5000).replace(/\r\n?/g, "\n").split("\n").map(line => line.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n");
+  if (!/[a-z]/i.test(text)) throw new AppError("The text needs to contain English.");
+  if (text.split("\n").length > 400) throw new AppError("A text can have at most 400 lines. You can save it in several parts.");
   return text;
 }
 // Whole-word match that ignores case, punctuation, and apostrophes at word edges (makin').
@@ -64,7 +64,7 @@ export function dictationScore(answer: string, original: string): number {
 }
 export function reviewWeight(mastery: number): number { return Math.max(0.08, Math.pow(1 - Math.min(100, Math.max(0, mastery)) / 100, 2)); }
 export function chooseWeighted<T extends { mastery: number }>(items: T[], random = Math.random()): T {
-  if (!items.length) throw new AppError("先学习一个词义，再开始复习。", 400, "NO_LEARNED_WORDS");
+  if (!items.length) throw new AppError("Learn a meaning first, then start reviewing.", 400, "NO_LEARNED_WORDS");
   let cursor = random * items.reduce((sum, item) => sum + reviewWeight(item.mastery), 0);
   for (const item of items) { cursor -= reviewWeight(item.mastery); if (cursor <= 0) return item; }
   return items[items.length - 1];
@@ -79,13 +79,13 @@ export function shuffled<T>(list: T[]): T[] {
 }
 export function validateFeedback(value: unknown): Feedback {
   const item = record(value);
-  if (typeof item.appropriate !== "boolean" || typeof item.score !== "number" || !Number.isFinite(item.score)) throw new AppError("模型未完成评估，请重试。", 502, "INVALID_MODEL_OUTPUT");
+  if (typeof item.appropriate !== "boolean" || typeof item.score !== "number" || !Number.isFinite(item.score)) throw new AppError("The model did not finish the assessment. Please try again.", 502, "INVALID_MODEL_OUTPUT");
   return { appropriate: item.appropriate, score: Math.round(Math.min(100, Math.max(0, item.score))), scenarioFeedback: modelText(item.scenarioFeedback), grammarFeedback: modelText(item.grammarFeedback), improvedSentence: modelText(item.improvedSentence) };
 }
 
 // Only accept bounded raster data from the image provider; never serve HTML/SVG.
 export function decodeImage(value: unknown): { bytes: Uint8Array; mimeType: string } {
-  const fail = () => new AppError("MiniMax 返回的图片无效，请重试。", 502, "IMAGE_FORMAT");
+  const fail = () => new AppError("MiniMax returned an invalid image. Please try again.", 502, "IMAGE_FORMAT");
   if (typeof value !== "string" || value.length < 16 || value.length > 16 * 1024 * 1024 || value.length % 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw fail();
   let binary: string;
   try { binary = atob(value); } catch { throw fail(); }

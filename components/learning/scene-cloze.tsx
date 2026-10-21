@@ -5,7 +5,7 @@ import { Check, CheckCheck, Eye, Lightbulb, PenLine, RefreshCw, Repeat2, RotateC
 import { buildCloze, clozeMatches, type Cloze, type ClozeLine } from "@/lib/cloze";
 import { type Passage } from "./types";
 
-const LEVELS = [{ id: "light", label: "轻", ratio: 0.15, note: "约 15% 的词" }, { id: "medium", label: "中", ratio: 0.3, note: "约 30% 的词" }, { id: "heavy", label: "重", ratio: 0.5, note: "约一半的词" }] as const;
+const LEVELS = [{ id: "light", label: "Light", ratio: 0.15, note: "about 15% of words" }, { id: "medium", label: "Medium", ratio: 0.3, note: "about 30% of words" }, { id: "heavy", label: "Heavy", ratio: 0.5, note: "about half the words" }] as const;
 type Level = (typeof LEVELS)[number]["id"];
 type Status = "" | "correct" | "wrong" | "revealed";
 const ratioOf = (level: Level) => LEVELS.find(item => item.id === level)!.ratio;
@@ -73,7 +73,7 @@ export function PassageCloze({ passage }: { passage: Passage }) {
       const blank = line.slots[position];
       if (blank === undefined) return <span key={position}>{token.text}</span>;
       const state = status[blank] || "", value = answers[blank] || "";
-      if (line.repeatOf !== undefined) return <button type="button" tabIndex={-1} key={position} className={`cloze-mirror ${state}`} onClick={() => focusBlank(blank)} title="重复的一行：在它第一次出现的位置填写">{state === "correct" || state === "revealed" ? token.text : value || " "}</button>;
+      if (line.repeatOf !== undefined) return <button type="button" tabIndex={-1} key={position} className={`cloze-mirror ${state}`} onClick={() => focusBlank(blank)} title="Repeated line: fill it in where it first appears">{state === "correct" || state === "revealed" ? token.text : value || " "}</button>;
       return <input key={position} data-blank={blank} className={`cloze-input ${state} ${hinted[blank] ? "hinted" : ""}`} style={{ width: `calc(${Math.max(2, token.text.length)}ch + 18px)` }}
         value={state === "revealed" ? cloze.blanks[blank].answer : value} readOnly={!open(blank)} maxLength={token.text.length + 12}
         onChange={event => type(blank, event.target.value)} onFocus={() => { lastFocused.current = blank; }}
@@ -84,8 +84,8 @@ export function PassageCloze({ passage }: { passage: Passage }) {
           else if (!open(blank)) { const next = nextOpen(blank, status); if (next >= 0) focusBlank(next); }
           else if (value.trim()) setStatus(list => { const copy = [...list]; copy[blank] = "wrong"; return copy; });
         }}
-        aria-label={`第 ${blank + 1} 空，共 ${total} 空`} aria-invalid={state === "wrong"} autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} />;
-    })}{line.repeatOf !== undefined && <span className="repeat-mark" title="重复的歌词行，不再挖空"><Repeat2 size={12} /></span>}</p>;
+        aria-label={`Blank ${blank + 1} of ${total}`} aria-invalid={state === "wrong"} autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} />;
+    })}{line.repeatOf !== undefined && <span className="repeat-mark" title="Repeated line, not blanked again"><Repeat2 size={12} /></span>}</p>;
   }
   function renderSegment(segment: number) {
     const { lines, blanks } = cloze.segments[segment];
@@ -94,26 +94,26 @@ export function PassageCloze({ passage }: { passage: Passage }) {
     return <div className="cloze-segment" key={`segment-${segment}`}>
       {lines.map(index => renderLine(cloze.lines[index], index))}
       {blanks.length > 0 && <div className={`cloze-check ${perfect ? "is-perfect" : done ? "is-done" : checked[segment] ? "is-checked" : ""}`}>
-        <span role="status">{perfect ? <><Check size={13} />这一段全对</> : checked[segment] || done ? `这一段填对 ${right} / ${blanks.length}${missed ? ` · ${missed} 处再想想` : ""}` : right ? `已填对 ${right} / ${blanks.length}` : `这一段 ${blanks.length} 空`}</span>
-        <span className="cloze-check-actions">{!done && <button type="button" className="text-button" onClick={() => check(segment)} title="快捷键：Ctrl / ⌘ + Enter"><CheckCheck size={13} />检查这一段</button>}
-        {!done && checked[segment] && <button type="button" className="text-button" onClick={() => revealSegment(segment)}><Eye size={13} />揭晓这一段</button>}
-        {done && !perfect && <button type="button" className="text-button" onClick={() => retry(segment)}><RotateCcw size={13} />这一段再填一次</button>}</span>
+        <span role="status">{perfect ? <><Check size={13} />All correct</> : checked[segment] || done ? `${right} / ${blanks.length} correct${missed ? ` · ${missed} to rethink` : ""}` : right ? `${right} / ${blanks.length} filled` : `${blanks.length} ${blanks.length === 1 ? "blank" : "blanks"} here`}</span>
+        <span className="cloze-check-actions">{!done && <button type="button" className="text-button" onClick={() => check(segment)} title="Shortcut: Ctrl / ⌘ + Enter"><CheckCheck size={13} />Check this stanza</button>}
+        {!done && checked[segment] && <button type="button" className="text-button" onClick={() => revealSegment(segment)}><Eye size={13} />Reveal this stanza</button>}
+        {done && !perfect && <button type="button" className="text-button" onClick={() => retry(segment)}><RotateCcw size={13} />Try this stanza again</button>}</span>
       </div>}
     </div>;
   }
 
-  return <section className="lesson-card practice-card cloze-card"><div className="section-top"><div className="section-label"><span className="section-icon"><PenLine size={17} /></span><h2>凭记忆，把它填回去</h2><span>FILL IT BACK</span></div><span className="item-count">{total} 处挖空</span></div>
-    <p className="practice-intro">随机挖掉一些词，凭记忆填回去。填对会自动跳到下一空；写完一段就点下面的「检查这一段」（或按 Ctrl / ⌘ + Enter），不用等全部写完。重复出现的行不会再挖空，只会跟着第一次出现的位置一起显示 <Repeat2 size={12} />。</p>
+  return <section className="lesson-card practice-card cloze-card"><div className="section-top"><div className="section-label"><span className="section-icon"><PenLine size={17} /></span><h2>Fill it back from memory</h2><span>RECALL</span></div><span className="item-count">{total} {total === 1 ? "blank" : "blanks"}</span></div>
+    <p className="practice-intro">Some words are blanked at random; type them back from memory. A correct word jumps to the next blank. When a stanza is done, press “Check this stanza” below (or Ctrl / ⌘ + Enter); there is no need to finish the whole text first. A repeated line is not blanked again and simply mirrors its first occurrence <Repeat2 size={12} />.</p>
     <div className="cloze-toolbar">
-      <div className="cloze-levels" role="radiogroup" aria-label="挖空数量">{LEVELS.map(item => <button key={item.id} role="radio" aria-checked={level === item.id} className={level === item.id ? "active" : ""} title={item.note} onClick={() => restart(item.id)}>{item.label}<small>{item.note}</small></button>)}</div>
-      <span className="cloze-progress"><b>{correct}</b> / {total} 已填对</span>
-      <button className="text-button" onClick={() => restart()}><RefreshCw size={14} />换一批</button>
+      <div className="cloze-levels" role="radiogroup" aria-label="How many blanks">{LEVELS.map(item => <button key={item.id} role="radio" aria-checked={level === item.id} className={level === item.id ? "active" : ""} title={item.note} onClick={() => restart(item.id)}>{item.label}<small>{item.note}</small></button>)}</div>
+      <span className="cloze-progress"><b>{correct}</b> / {total} correct</span>
+      <button className="text-button" onClick={() => restart()}><RefreshCw size={14} />New blanks</button>
     </div>
     <div className="progress-track"><span style={{ width: `${total ? (100 * correct) / total : 0}%` }} /></div>
     <div className="passage-text cloze-text" ref={textRef}>
       {cloze.lines.map((line, index) => line.kind === "empty" ? <div className="passage-gap" key={index} /> : line.kind === "section" ? <div className="passage-section" key={index}>{line.text}</div> : startOf.has(index) ? renderSegment(startOf.get(index)!) : null)}
     </div>
-    {finished ? <div className="dictation-result cloze-result" role="status"><span className="result-score">{correct}<small> / {total}</small></span><div><strong>{correct === total ? hinted.some(Boolean) ? "全部填出来了，提示也帮了点忙。" : "全部记住了！" : "琥珀色的是这次没想起来的词。"}</strong><p>{correct === total ? "合上屏幕哼一遍，或者调高难度再来一轮。" : "换一批再练，会挑选不同的词。"}</p></div><button className="primary-button" onClick={() => restart()}><RefreshCw size={15} />再练一轮</button></div>
-      : total > 0 && <div className="cloze-actions"><button className="text-button" onClick={hint}><Lightbulb size={14} />提示一个字母</button><button className="text-button" onClick={reveal}><Eye size={14} />揭晓剩下的答案</button></div>}
+    {finished ? <div className="dictation-result cloze-result" role="status"><span className="result-score">{correct}<small> / {total}</small></span><div><strong>{correct === total ? hinted.some(Boolean) ? "All filled in, with a little help from the hints." : "You remembered every word!" : "The words in amber did not come back this time."}</strong><p>{correct === total ? "Look away and hum it through, or raise the level for another round." : "New blanks pick different words."}</p></div><button className="primary-button" onClick={() => restart()}><RefreshCw size={15} />Another round</button></div>
+      : total > 0 && <div className="cloze-actions"><button className="text-button" onClick={hint}><Lightbulb size={14} />Hint a letter</button><button className="text-button" onClick={reveal}><Eye size={14} />Reveal the rest</button></div>}
   </section>;
 }

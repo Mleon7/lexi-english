@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { blankable, buildCloze, clozeMatches, parsePassage, phraseSpans, stanzas } from "../lib/cloze.ts";
+import { blankable, buildCloze, clozeMatches, parsePassage, phraseSpans, rebreakLines, stanzas } from "../lib/cloze.ts";
 
 const song = "[Chorus]\nI'm gonna make a change, for once in my life\nIt's gonna feel real good\n\nI'm Gonna Make A Change — for once in my life!\n(Ooh, yeah)\nIt's gonna feel real good";
 function seeded(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
@@ -65,4 +65,17 @@ test("marked expressions become single tap targets, longest first, wherever they
   assert.deepEqual(phraseSpans(overlap, [{ text: "give up", phrase: "give up" }, { text: "give up on", phrase: "give up on" }]).map(span => span.text), ["give up on"]);
   const [lyric] = parsePassage("We're makin’ it through");
   assert.deepEqual(phraseSpans(lyric, [{ text: "makin' it", phrase: "make it" }]).map(span => span.text), ["makin’ it"]);
+});
+
+test("only the model's line breaks are taken over, never its words", () => {
+  const pasted = "[Verse]\nI'm gonna make a change\nfor once in my life. It's gonna feel\nreal good\n\nFirst sentence. Second one!";
+  const split = rebreakLines(pasted, ["[Verse]", "im gonna make a change for once in my life", "Its gonna feel real good.", "", "First sentence.", "Second one!"]);
+  assert.equal(split.text, "[Verse]\nI'm gonna make a change for once in my life.\nIt's gonna feel real good\n\nFirst sentence.\nSecond one!");
+  assert.equal(split.matched, split.words);
+  const article = rebreakLines("One. Two words. Three", ["One.", "", "Two words.", "Three"]);
+  assert.equal(article.text, "One.\n\nTwo words.\nThree");
+  // A line the model left out keeps its own breaks, and nothing is joined onto it.
+  assert.equal(rebreakLines("Hello there\nHow are you\nGoodbye now", ["Hello there Goodbye now"]).text, "Hello there\nHow are you\nGoodbye now");
+  const unrelated = rebreakLines("One two three", ["Something else entirely", 42]);
+  assert.deepEqual([unrelated.text, unrelated.matched], ["One two three", 0]);
 });

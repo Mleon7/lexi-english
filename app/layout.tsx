@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "词境 Lexi · 在语境里，真正学会一个词",
-  description: "以词义为起点，在阅读、听写和表达中学习英语，透过智能复习让记忆更长久。",
+  title: "Lexi · Really learn a word in context",
+  description: "Start from one meaning of a word, learn it through reading, dictation, and writing, and keep it with smart reviews.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
@@ -16,7 +16,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN">
+    <html lang="en">
       <body className="antialiased">{children}</body>
     </html>
   );

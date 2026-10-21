@@ -97,7 +97,52 @@ test('review moves directly to independent writing and assesses the learner cont
     assert.match(h.calls[1].instruction, /Minor grammar errors MUST NOT cause failure/);
     assert.equal(h.calls[1].data.scenario, undefined);
     assert.equal(h.db.prepare('SELECT review_count FROM senses').get().review_count, 1);
+    assert.equal(result.collected, true);
+    const kept = JSON.parse(h.db.prepare('SELECT materials FROM senses').get().materials).at(-1);
+    assert.deepEqual([kept.kind, kept.text, kept.practice, kept.exerciseId], ['example', 'I was meticulous when I labelled every sample in the laboratory.', 'review', review.reviewId]);
     await assert.rejects(h.action({ action: 'reviewSentence', reviewId: review.reviewId, answer: 'I was meticulous when I label every sample in the laboratory.' }), e => e.code === 'STAGE_MISMATCH');
+  } finally { h.db.close(); }
+});
+
+test('a review sentence that fails is not kept as an example', async () => {
+  const h = await harness();
+  try {
+    h.set({ scenario: 'A worker checks every tiny detail.', sentence: 'The worker is ____ about every detail.' });
+    const review = await h.action({ action: 'reviewStart' });
+    await h.action({ action: 'reviewBlank', reviewId: review.reviewId, answer: 'meticulous' });
+    h.set({ appropriate: false, score: 30, scenarioFeedback: 'This is not about care.', grammarFeedback: 'Fine.', improvedSentence: 'The meticulous storm hit the town.' });
+    const result = await h.action({ action: 'reviewSentence', reviewId: review.reviewId, answer: 'The meticulous storm hit the town.' });
+    assert.equal(result.passed, false); assert.equal(result.collected, false);
+    assert.equal(JSON.parse(h.db.prepare('SELECT materials FROM senses').get().materials).length, 3);
+  } finally { h.db.close(); }
+});
+
+test('the corrected writing sentence becomes one example per exercise', async () => {
+  const h = await harness();
+  try {
+    const materials = () => JSON.parse(h.db.prepare('SELECT materials FROM senses').get().materials);
+    const feedback = improvedSentence => ({ appropriate: true, score: 90, scenarioFeedback: '很好。', grammarFeedback: '注意时态。', improvedSentence });
+    h.set({ scenario: 'You are checking an important report.' });
+    const { exerciseId } = await h.action({ action: 'writingScenario', senseId: 'sense-a' });
+    h.set(feedback('I was meticulous when I checked the report.'));
+    const first = await h.action({ action: 'writingSubmit', exerciseId, answer: 'I am meticulous when I checked the report.' });
+    assert.equal(first.collected, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(first.sense.materials.slice(3).map(item => [item.kind, item.text, item.practice]))), [['example', 'I was meticulous when I checked the report.', 'writing']]);
+
+    // Checking the same exercise again replaces its sentence instead of adding another.
+    h.set(feedback('I was meticulous as I checked every figure in the report.'));
+    const second = await h.action({ action: 'writingSubmit', exerciseId, answer: 'I was meticulous as I check every figure in the report.' });
+    assert.deepEqual(JSON.parse(JSON.stringify(second.sense.materials.slice(3).map(item => item.text))), ['I was meticulous as I checked every figure in the report.']);
+    h.set({ appropriate: false, score: 20, scenarioFeedback: '词义不对。', grammarFeedback: '语法正确。', improvedSentence: 'The meticulous rain fell.' });
+    const failed = await h.action({ action: 'writingSubmit', exerciseId, answer: 'The meticulous rain fell.' });
+    assert.equal(failed.collected, false); assert.equal(failed.sense, undefined); assert.equal(materials().length, 4);
+
+    // A sentence that is already an example is not added twice.
+    h.set({ scenario: 'You tidy your desk.' });
+    const other = await h.action({ action: 'writingScenario', senseId: 'sense-a' });
+    h.set(feedback('She was meticulous about her desk!'));
+    assert.equal((await h.action({ action: 'writingSubmit', exerciseId: other.exerciseId, answer: 'She was meticulous about her desk.' })).collected, true);
+    assert.equal(materials().length, 4);
   } finally { h.db.close(); }
 });
 test('writing scenarios request English; translations retain cloze blanks', async () => {
@@ -262,5 +307,27 @@ test('fixed expressions are marked once per text version and steer the lookup of
     assert.equal((await h.action({ action: 'passagePhrases', passageId: passage.id })).passage.phrases, null);
     h.set({ phrases: 'none' });
     await assert.rejects(h.action({ action: 'passagePhrases', passageId: passage.id }), e => e.code === 'INVALID_MODEL_OUTPUT');
+  } finally { h.db.close(); }
+});
+
+test('pasted text can be put one sentence per line without changing a word', async () => {
+  const h = await harness();
+  try {
+    const pasted = "I'm gonna make a change\nfor once in my life. It's gonna feel\nreal good";
+    h.set({ lines: ["I'm gonna make a change for once in my life.", "It's gonna feel real good"] });
+    const split = await h.action({ action: 'passageSave', title: 'Change', text: pasted, splitLines: true });
+    assert.equal(split.passage.text, "I'm gonna make a change for once in my life.\nIt's gonna feel real good");
+    assert.equal(split.lines, 'changed'); assert.equal(h.calls[0].data.text, pasted); assert.match(h.calls[0].instruction, /one sentence/);
+
+    // An answer that does not line up with the pasted words keeps the text as pasted.
+    h.set({ lines: ['Something else entirely'] });
+    const kept = await h.action({ action: 'passageSave', passageId: split.passage.id, title: 'Change', text: pasted, splitLines: true });
+    assert.equal(kept.passage.text, pasted); assert.equal(kept.lines, 'failed'); assert.ok(kept.linesError);
+
+    const calls = h.calls.length;
+    const plain = await h.action({ action: 'passageSave', title: 'Plain', text: pasted });
+    assert.equal(plain.passage.text, pasted); assert.equal(plain.lines, undefined); assert.equal(h.calls.length, calls);
+    h.set({ lines: pasted.split('\n') });
+    assert.equal((await h.action({ action: 'passageSave', passageId: plain.passage.id, title: 'Plain', text: pasted, splitLines: true })).lines, 'unchanged');
   } finally { h.db.close(); }
 });

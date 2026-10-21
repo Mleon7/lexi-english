@@ -3,11 +3,11 @@ import { AppError, type Passage, type Sense, type Settings } from "./core";
 import { speechConfiguration } from "./speech-config";
 
 export function database(): D1Database {
-  if (!env.DB) throw new AppError("学习数据库尚未就绪，请稍后重试。", 503, "STORAGE_UNAVAILABLE");
+  if (!env.DB) throw new AppError("The study database is not ready yet. Please try again later.", 503, "STORAGE_UNAVAILABLE");
   return env.DB;
 }
 export function bucket(): R2Bucket {
-  if (!env.BUCKET) throw new AppError("媒体存储尚未就绪，请稍后重试。", 503, "MEDIA_STORAGE_UNAVAILABLE");
+  if (!env.BUCKET) throw new AppError("Media storage is not ready yet. Please try again later.", 503, "MEDIA_STORAGE_UNAVAILABLE");
   return env.BUCKET;
 }
 export type SenseRow = { id: string; user_id: string; word: string; phonetic: string; pos: string; meaning: string; definition: string; learned: number; mastery: number; review_count: number; materials: string; created_at: number; updated_at: number };
@@ -17,7 +17,7 @@ export function publicSense(row: SenseRow): Sense {
 }
 export async function getSense(userId: string, id: string): Promise<SenseRow> {
   const row = await database().prepare("SELECT * FROM senses WHERE id = ? AND user_id = ?").bind(id, userId).first<SenseRow>();
-  if (!row) throw new AppError("没有找到这个词义。", 404, "NOT_FOUND");
+  if (!row) throw new AppError("This meaning was not found.", 404, "NOT_FOUND");
   return row;
 }
 export async function listSenses(userId: string, learnedOnly = true): Promise<Sense[]> {
@@ -30,7 +30,7 @@ export function publicPassage(row: PassageRow): Passage {
 }
 export async function getPassage(userId: string, id: string): Promise<PassageRow> {
   const row = await database().prepare("SELECT * FROM passages WHERE id = ? AND user_id = ?").bind(id, userId).first<PassageRow>();
-  if (!row) throw new AppError("没有找到这段文本。", 404, "NOT_FOUND");
+  if (!row) throw new AppError("This text was not found.", 404, "NOT_FOUND");
   return row;
 }
 export async function listPassages(userId: string): Promise<Passage[]> {
@@ -44,7 +44,7 @@ export async function settings(userId: string): Promise<Settings> {
 }
 export async function exercise(userId: string, id: string, kind: string): Promise<ExerciseRow> {
   const row = await database().prepare("SELECT * FROM exercises WHERE id = ? AND user_id = ? AND kind = ?").bind(id, userId, kind).first<ExerciseRow>();
-  if (!row) throw new AppError("练习不存在，请重新开始。", 404, "NOT_FOUND");
+  if (!row) throw new AppError("This exercise does not exist. Please start again.", 404, "NOT_FOUND");
   return row;
 }
 export async function createExercise(userId: string, senseId: string, kind: string, stage: string, data: unknown): Promise<string> {
@@ -62,10 +62,10 @@ export async function updateMaterials(userId: string, senseId: string, change: (
     const result = await database().prepare("UPDATE senses SET materials = ?, learned = 1, updated_at = ? WHERE id = ? AND user_id = ? AND updated_at = ?").bind(JSON.stringify(materials), version, senseId, userId, row.updated_at).run();
     if (result.meta.changes) return publicSense(await getSense(userId, senseId));
   }
-  throw new AppError("学习材料正在另一处更新，请稍后重试。", 409, "CONCURRENT_UPDATE");
+  throw new AppError("These study materials are being updated elsewhere. Please try again shortly.", 409, "CONCURRENT_UPDATE");
 }
 export async function rateLimit(userId: string): Promise<void> {
   const now = Date.now();
   const row = await database().prepare("INSERT INTO request_limits (key,count,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count = CASE WHEN expires_at < ? THEN 1 ELSE count + 1 END, expires_at = CASE WHEN expires_at < ? THEN ? ELSE expires_at END RETURNING count").bind(`actions:${userId}`, now + 60000, now, now, now + 60000).first<{ count: number }>();
-  if (row && row.count > 45) throw new AppError("操作有些频繁，请稍等一分钟再试。", 429, "RATE_LIMIT");
+  if (row && row.count > 45) throw new AppError("That is a lot of requests. Please wait a minute and try again.", 429, "RATE_LIMIT");
 }

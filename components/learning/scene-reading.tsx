@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, BookOpen, CheckCheck, Info, LoaderCircle, Plus, Quote, Search, X } from "lucide-react";
+import { ArrowRight, BookOpen, CheckCheck, Info, Languages, LoaderCircle, Plus, Quote, Search, X } from "lucide-react";
 import { parsePassage, phraseSpans, type PassageLine } from "@/lib/cloze";
 import { type Passage, type Sense, type Notify } from "./types";
 import { ApiError, request } from "./api";
-import { Highlight, Loading } from "./shared";
+import { Highlight, Loading, Tip } from "./shared";
 
 type Pick = { line: number; selection: string };
 type Lookup = Pick & { status: "loading" | "ready" | "error"; sense?: Sense; collected?: boolean; error?: string };
@@ -49,7 +49,7 @@ export function PassageReading({ passage, phraseError, onRetryPhrases, onSense, 
       if (id === version.current) setLookup({ line, selection, status: "ready", sense: result.sense, collected: result.collected });
     } catch (err) {
       if (err instanceof ApiError && err.code === "auth") onError(err);
-      if (id === version.current) setLookup({ line, selection, status: "error", error: err instanceof Error ? err.message : "没有查到这个词，请重试。" });
+      if (id === version.current) setLookup({ line, selection, status: "error", error: err instanceof Error ? err.message : "This word could not be looked up. Please try again." });
     }
   }
   async function add() {
@@ -60,7 +60,7 @@ export function PassageReading({ passage, phraseError, onRetryPhrases, onSense, 
     try {
       const result = await request<{ sense: Sense; collected: boolean }>("passageAdd", { passageId: passage.id, line: lines[target.line].text, senseId: target.sense.id });
       onSense(result.sense);
-      notify(learned ? `已把这一句收进 ${result.sense.word} 的例句` : `已把 ${result.sense.word} 加入单词本，原句也一起收录了`);
+      notify(learned ? `This line is now an example for ${result.sense.word}` : `Added ${result.sense.word} to your word book, with this line as an example`);
       if (id === version.current) setLookup({ ...target, sense: result.sense, collected: result.collected });
     } catch (err) { onError(err); } finally { setAdding(false); }
   }
@@ -93,7 +93,7 @@ export function PassageReading({ passage, phraseError, onRetryPhrases, onSense, 
       const token = line.tokens[position], span = spans[index].find(item => item.start === position);
       if (span) {
         const whole = active && lookup.selection.toLowerCase() === span.text.toLowerCase();
-        nodes.push(<span key={position} className={`passage-word passage-phrase ${whole ? "is-picked" : ""}`} data-word={span.text} title={`词组：${span.phrase}`} role="button" tabIndex={focus(position)}>{line.tokens.slice(position, span.end + 1).map((part, n) => <span key={n} className={!whole && active && part.word && picked.has(part.text.toLowerCase()) ? "is-picked" : undefined}>{part.text}</span>)}</span>);
+        nodes.push(<span key={position} className={`passage-word passage-phrase ${whole ? "is-picked" : ""}`} data-word={span.text} title={`Phrase: ${span.phrase}`} role="button" tabIndex={focus(position)}>{line.tokens.slice(position, span.end + 1).map((part, n) => <span key={n} className={!whole && active && part.word && picked.has(part.text.toLowerCase()) ? "is-picked" : undefined}>{part.text}</span>)}</span>);
         position = span.end;
       } else if (!token.word) nodes.push(<span key={position}>{token.text}</span>);
       else nodes.push(<span key={position} className={`passage-word ${active && picked.has(token.text.toLowerCase()) ? "is-picked" : ""}`} data-word={token.text} role="button" tabIndex={focus(position)}>{token.text}</span>);
@@ -101,9 +101,9 @@ export function PassageReading({ passage, phraseError, onRetryPhrases, onSense, 
     return nodes;
   }
   return <div className="scene-layout">
-    <section className="lesson-card practice-card passage-card"><div className="section-top"><div className="section-label"><span className="section-icon"><BookOpen size={17} /></span><h2>在原文里读懂它</h2><span>READ IN CONTEXT</span></div>{passage.phrases ? <span className="item-count">{phraseCount ? `${phraseCount} 处词组 · 轻点整体查询` : "轻点单词 · 拖选短语"}</span> : phraseError ? <span className="item-count">轻点单词 · 拖选短语</span> : <span className="item-count phrase-status"><LoaderCircle size={11} className="spin" />正在标出词组…</span>}</div>
-      <p className="practice-intro">遇到想弄懂的词，轻点它；虚线标出的是词组和固定搭配，点其中任一个词就会整体查询。想查别的短语，就拖选几个词。词义按它所在的这一句来判断，加入单词本时，这句原文会成为它的例句。</p>
-      {phraseError && <p className="inline-error phrase-error" role="alert">词组没有标出来：{phraseError}<button className="text-button" onClick={onRetryPhrases}>重新识别</button></p>}
+    <section className="lesson-card practice-card passage-card"><div className="section-top"><div className="section-label"><span className="section-icon"><BookOpen size={17} /></span><h2>Read it in its own words</h2><span>IN CONTEXT</span></div>{passage.phrases ? <span className="item-count">{phraseCount ? `${phraseCount} ${phraseCount === 1 ? "phrase" : "phrases"} · tap to look up` : "Tap a word · drag for a phrase"}</span> : phraseError ? <span className="item-count">Tap a word · drag for a phrase</span> : <span className="item-count phrase-status"><LoaderCircle size={11} className="spin" />Marking phrases…</span>}</div>
+      <p className="practice-intro">Tap a word you want to understand. Phrases and collocations have a dashed underline; tapping any of their words looks up the whole expression. To look up another phrase, drag across a few words. The meaning is judged from the line it appears in, and when you save it, that line becomes its example.</p>
+      {phraseError && <p className="inline-error phrase-error" role="alert">Phrases were not marked: {phraseError}<button className="text-button" onClick={onRetryPhrases}>Try again</button></p>}
       <div className="passage-text" ref={textRef} onKeyDown={keys} onClick={event => { if (window.getSelection()?.isCollapsed === false) return; const hit = wordAt(event.target as Element); if (hit) void look(hit); }}>
         {lines.map((line, index) => line.kind === "empty" ? <div className="passage-gap" key={index} /> : line.kind === "section" ? <div className="passage-section" key={index}>{line.text}</div> :
           <p className={`passage-line ${lookup?.line === index ? "is-active" : ""}`} data-line={index} key={index}>{words(line, index)}</p>)}
@@ -111,26 +111,26 @@ export function PassageReading({ passage, phraseError, onRetryPhrases, onSense, 
     </section>
     <aside className={`scene-lookup ${lookup || pending ? "is-active" : ""}`} aria-live="polite">
       <div className="lesson-card lookup-card">
-        {pending && <div className="lookup-pending"><div className="lookup-top"><span className="eyebrow">SELECTED</span><button className="icon-button" onClick={() => setPending(null)} aria-label="取消选择"><X size={15} /></button></div><p>“{pending.selection}”</p>{tooLong ? <span className="inline-error">一次最多查询 {MAX_WORDS} 个词，请缩短选择。</span> : <button className="primary-button full-width" onClick={() => void look(pending)}><Search size={15} />按这一句查询</button>}</div>}
+        {pending && <div className="lookup-pending"><div className="lookup-top"><span className="eyebrow">SELECTED</span><button className="icon-button" onClick={() => setPending(null)} aria-label="Clear selection"><X size={15} /></button></div><p>“{pending.selection}”</p>{tooLong ? <span className="inline-error">Look up at most {MAX_WORDS} words at a time. Please select fewer.</span> : <button className="primary-button full-width" onClick={() => void look(pending)}><Search size={15} />Look up in this line</button>}</div>}
         {lookup ? <div className="lookup-result">
-          <div className="lookup-top"><span className="eyebrow">IN THIS LINE</span><button className="icon-button" onClick={() => { version.current++; setLookup(null); }} aria-label="关闭词义"><X size={15} /></button></div>
-          {lookup.status === "loading" && <div className="lookup-loading"><Loading label={`正在结合上下文理解「${lookup.selection}」…`} /></div>}
-          {lookup.status === "error" && <><p className="inline-error" role="alert">{lookup.error}</p><button className="text-button" onClick={() => void look({ line: lookup.line, selection: lookup.selection })}>重新查询 <ArrowRight size={13} /></button></>}
+          <div className="lookup-top"><span className="eyebrow">IN THIS LINE</span><button className="icon-button" onClick={() => { version.current++; setLookup(null); }} aria-label="Close"><X size={15} /></button></div>
+          {lookup.status === "loading" && <div className="lookup-loading"><Loading label={`Reading “${lookup.selection}” in its context…`} /></div>}
+          {lookup.status === "error" && <><p className="inline-error" role="alert">{lookup.error}</p><button className="text-button" onClick={() => void look({ line: lookup.line, selection: lookup.selection })}>Try again <ArrowRight size={13} /></button></>}
           {sense && <>
             <div className="lookup-word"><h3>{sense.word}</h3>{sense.phonetic && <span className="word-pronunciation">{sense.phonetic}</span>}</div>
-            {lookup.selection.toLowerCase() !== sense.word && <p className="lookup-origin">原文：<em>{lookup.selection}</em></p>}
-            <div className="word-meaning"><span className="pos-tag">{sense.pos}</span><span>{sense.meaning}</span></div>
+            {lookup.selection.toLowerCase() !== sense.word && <p className="lookup-origin">In the text: <em>{lookup.selection}</em></p>}
+            <div className="word-meaning"><span className="pos-tag">{sense.pos}</span><Tip label="Chinese meaning" icon={<Languages size={14} />}><span className="translation-content">{sense.meaning}</span></Tip></div>
             <p className="lookup-definition">{sense.definition}</p>
             <blockquote className="lookup-line"><Quote size={12} /><span><Highlight text={lines[lookup.line].text} word={lookup.selection} /></span></blockquote>
             <div className="lookup-actions">
-              {!sense.learned ? <button className="primary-button full-width" disabled={adding} onClick={() => void add()}>{adding ? <Loading label="正在生成学习材料…" /> : <><Plus size={15} />加入单词本</>}</button>
-                : lookup.collected ? <span className="success-note"><CheckCheck size={15} />已在单词本，并收录了这一句</span>
-                : <><span className="lookup-known">这个词义已在单词本中。</span><button className="text-button" disabled={adding} onClick={() => void add()}>{adding ? <Loading label="收录中" /> : <><Quote size={13} />把这一句收进例句</>}</button></>}
-              {sense.learned && <button className="text-button" onClick={() => onOpenSense(sense.id)}>去学习这个词义 <ArrowRight size={13} /></button>}
+              {!sense.learned ? <button className="primary-button full-width" disabled={adding} onClick={() => void add()}>{adding ? <Loading label="Preparing study materials…" /> : <><Plus size={15} />Add to word book</>}</button>
+                : lookup.collected ? <span className="success-note"><CheckCheck size={15} />In your word book, with this line as an example</span>
+                : <><span className="lookup-known">This meaning is already in your word book.</span><button className="text-button" disabled={adding} onClick={() => void add()}>{adding ? <Loading label="Saving" /> : <><Quote size={13} />Save this line as an example</>}</button></>}
+              {sense.learned && <button className="text-button" onClick={() => onOpenSense(sense.id)}>Study this meaning <ArrowRight size={13} /></button>}
             </div>
           </>}
-          {lookup.status !== "loading" && parts.length > 1 && <div className="lookup-split"><span>拆开单独查</span>{parts.map(part => <button key={part} className="lookup-chip" onClick={() => void look({ line: lookup.line, selection: part })}>{part}</button>)}</div>}
-        </div> : !pending && <div className="lookup-idle"><span className="eyebrow">READ IN CONTEXT</span><h3>同一个词，<br />在不同句子里不一样。</h3><p>轻点任意单词，按它所在的这一句给出词义；虚线标出的词组会整体查询，拖选几个词可以查询其他短语。</p><p className="lookup-tip"><Info size={13} />已经学过的词义会被认出来，不会重复加入。</p></div>}
+          {lookup.status !== "loading" && parts.length > 1 && <div className="lookup-split"><span>Look up one word</span>{parts.map(part => <button key={part} className="lookup-chip" onClick={() => void look({ line: lookup.line, selection: part })}>{part}</button>)}</div>}
+        </div> : !pending && <div className="lookup-idle"><span className="eyebrow">READ IN CONTEXT</span><h3>The same word<br />means different things in different lines.</h3><p>Tap any word to see what it means in its line. Underlined phrases are looked up as a whole; drag across a few words to look up another phrase.</p><p className="lookup-tip"><Info size={13} />Meanings you have already learned are recognised and never added twice.</p></div>}
       </div>
     </aside>
   </div>;

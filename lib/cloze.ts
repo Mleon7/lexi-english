@@ -58,6 +58,52 @@ export function phraseSpans(line: PassageLine, phrases: Pick<PassagePhrase, "tex
   return spans.sort((a, b) => a.start - b.start);
 }
 
+// Copying from a web page can break one sentence over several lines, or run a
+// whole paragraph on one line. The model suggests where the lines should break,
+// but only its breaks are taken over: its words are aligned with the pasted ones,
+// so the words and punctuation always stay exactly as pasted. Section labels and
+// empty lines of the original stay where they are; a pasted word the model left
+// out keeps its original line break.
+export function rebreakLines(original: string, suggested: unknown[]): { text: string; matched: number; words: number } {
+  const key = (word: string) => lower(word).replace(/[^\p{L}\p{N}]/gu, "") || word;
+  // 0: same line as the previous word, 1: starts a line, 2: starts a paragraph.
+  const theirs: { key: string; start: number }[] = [];
+  let pending = 1;
+  for (const line of suggested) {
+    const value = typeof line === "string" ? line.trim() : "";
+    if (!value || isSectionLine(value)) { pending = 2; continue; }
+    value.split(/\s+/).forEach((word, n) => theirs.push({ key: key(word), start: n ? 0 : pending }));
+    pending = 1;
+  }
+  const lines = original.split("\n"), words: { text: string; key: string; start: number }[] = [];
+  for (const line of lines) if (line.trim() && !isSectionLine(line)) line.trim().split(/\s+/).forEach((word, n) => words.push({ text: word, key: key(word), start: n ? 0 : 1 }));
+  const n = words.length, m = theirs.length;
+  if (!n || !m || (n + 1) * (m + 1) > 9e6) return { text: original, matched: 0, words: n };
+  // Longest common subsequence of the two word lists, filled from the end.
+  const table = new Uint16Array((n + 1) * (m + 1)), at = (i: number, j: number) => table[i * (m + 1) + j];
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) table[i * (m + 1) + j] = words[i].key === theirs[j].key ? at(i + 1, j + 1) + 1 : Math.max(at(i + 1, j), at(i, j + 1));
+  const breaks = words.map(word => word.start);
+  let matched = 0, carry = 0, last = -1;
+  for (let i = 0, j = 0; i < n && j < m;) {
+    // Joining is only trusted onto the word the model saw before it, not onto a pasted word it left out.
+    if (words[i].key === theirs[j].key) { breaks[i] = Math.max(carry, theirs[j].start, last === i - 1 ? 0 : words[i].start); carry = 0; last = i; matched++; i++; j++; }
+    else if (at(i, j + 1) >= at(i + 1, j)) { carry = Math.max(carry, theirs[j].start); j++; }
+    // A pasted word the model changed takes the break of the word it replaced.
+    else { if (carry) breaks[i] = carry; carry = 0; i++; }
+  }
+  const out: string[] = [];
+  let index = 0, inBlock = false;
+  for (const line of lines) {
+    if (!line.trim() || isSectionLine(line)) { out.push(line.trim()); inBlock = false; continue; }
+    for (let count = line.trim().split(/\s+/).length; count > 0; count--, index++) {
+      if (!inBlock) { out.push(words[index].text); inBlock = true; continue; }
+      if (breaks[index] === 2) out.push("");
+      if (breaks[index]) out.push(words[index].text); else out[out.length - 1] += ` ${words[index].text}`;
+    }
+  }
+  return { text: out.join("\n"), matched, words: n };
+}
+
 // Lines that differ only in case or punctuation count as the same lyric line.
 export function lineKey(line: PassageLine): string { return line.tokens.filter(token => token.word).map(token => lower(token.text)).join(" "); }
 

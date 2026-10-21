@@ -1,10 +1,10 @@
 import { AppError } from "./core";
 
-const formatError = () => new AppError("Qwen3-TTS 返回的音频无效，请确认运行的是 CustomVoice Demo。", 502, "SPEECH_FORMAT");
+const formatError = () => new AppError("Qwen3-TTS returned invalid audio. Make sure the CustomVoice demo is running.", 502, "SPEECH_FORMAT");
 
 function generationError(status: unknown): AppError {
-  if (typeof status === "string" && /out of memory/i.test(status)) return new AppError("Qwen3-TTS 显存不足，请关闭其他占用显存的程序，再用较短的句子重试。", 503, "SPEECH_MEMORY");
-  return new AppError("Qwen3-TTS 未能生成音频，请查看本地 Demo 的状态或终端错误后重试。", 502, "SPEECH_FAILED");
+  if (typeof status === "string" && /out of memory/i.test(status)) return new AppError("Qwen3-TTS ran out of GPU memory. Close other programs using the GPU and try a shorter sentence.", 503, "SPEECH_MEMORY");
+  return new AppError("Qwen3-TTS could not generate audio. Check the local demo's status or terminal errors and try again.", 502, "SPEECH_FAILED");
 }
 
 // Gradio's public call API: POST -> event_id -> SSE complete -> FileData.
@@ -44,14 +44,14 @@ export async function qwenSpeech(baseUrl: string, text: string, speaker: string)
   try {
     base = new URL(baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
     if (!["http:", "https:"].includes(base.protocol) || base.username || base.password || base.search || base.hash) throw new Error();
-  } catch { throw new AppError("QWEN_TTS_URL 格式错误，请填写本地服务地址，例如 http://127.0.0.1:8000。", 503, "SPEECH_CONFIG"); }
+  } catch { throw new AppError("QWEN_TTS_URL is malformed. Use the local service address, e.g. http://127.0.0.1:8000.", 503, "SPEECH_CONFIG"); }
   const signal = AbortSignal.timeout(300000);
   const request = async (url: URL, init?: RequestInit) => {
     const response = await fetch(url, { ...init, redirect: "manual", signal });
     if (!response.ok) {
       await response.body?.cancel();
-      if (response.status === 404) throw new AppError("未找到 Qwen3-TTS 接口，请确认地址和 CustomVoice Demo。", 503, "SPEECH_CONFIG");
-      throw new AppError("Qwen3-TTS 本地服务返回错误，请检查 Demo 是否已就绪。", 502, "SPEECH_FAILED");
+      if (response.status === 404) throw new AppError("The Qwen3-TTS endpoint was not found. Check the address and the CustomVoice demo.", 503, "SPEECH_CONFIG");
+      throw new AppError("The local Qwen3-TTS service returned an error. Check that the demo is ready.", 502, "SPEECH_FAILED");
     }
     return response;
   };
@@ -92,7 +92,7 @@ export async function qwenSpeech(baseUrl: string, text: string, speaker: string)
     return bytes;
   } catch (error) {
     if (error instanceof AppError) throw error;
-    if (signal.aborted) throw new AppError("Qwen3-TTS 生成超过 5 分钟，请缩短文本或等待本地队列完成后重试。", 504, "SPEECH_TIMEOUT");
-    throw new AppError("无法连接本地 Qwen3-TTS，请启动 qwen-tts-demo，并检查 QWEN_TTS_URL。", 502, "PROVIDER_UNAVAILABLE");
+    if (signal.aborted) throw new AppError("Qwen3-TTS took more than 5 minutes. Shorten the text or wait for the local queue, then try again.", 504, "SPEECH_TIMEOUT");
+    throw new AppError("Cannot reach the local Qwen3-TTS. Start qwen-tts-demo and check QWEN_TTS_URL.", 502, "PROVIDER_UNAVAILABLE");
   }
 }
