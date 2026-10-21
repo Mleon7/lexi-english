@@ -29,6 +29,7 @@ async function harness(options = {}) {
   const env = { DB: adapter, ...options, BUCKET: {
     async head(key) { return audio.get(key) || null; },
     async put(key, bytes, metadata) { audio.set(key, { bytes, ...metadata }); },
+    async delete(key) { audio.delete(key); },
   } };
   const context = vm.createContext({ console, crypto: webcrypto, TextEncoder, Uint8Array, atob });
   const envModule = new vm.SyntheticModule(['env'], function () { this.setExport('env', env); }, { context });
@@ -240,7 +241,7 @@ test('a word picked from a lyric line resolves its sense from that line and keep
     const line = "I'm startin' with the river";
     await assert.rejects(h.action({ action: 'passageLookup', passageId: passage.id, line, selection: 'road' }), e => e.code === 'INVALID_INPUT');
     await assert.rejects(h.action({ action: 'passageLookup', passageId: passage.id, line: 'Not in the song', selection: 'song' }), e => e.code === 'LINE_CHANGED');
-    h.set({ word: 'start', contextIndex: 1, senses: [{ pos: 'v.', meaning: '启动（机器）', definition: 'To make a machine begin working.' }, { pos: 'v.', meaning: '开始', definition: 'To begin doing something.' }] });
+    h.set({ word: 'start', contextIndex: 1, senses: [{ pos: 'v.', meaning: '启动（机器）', definition: 'To make a machine begin working.', frequency: 3 }, { pos: 'v.', meaning: '开始', definition: 'To begin doing something.', frequency: 5 }] });
     const found = await h.action({ action: 'passageLookup', passageId: passage.id, line, selection: 'startin' });
     assert.equal(found.sense.word, 'start'); assert.equal(found.sense.meaning, '开始'); assert.equal(found.sense.learned, false); assert.equal(found.collected, false);
     assert.deepEqual(JSON.parse(JSON.stringify(h.calls[0].data)), { selection: 'startin', line, nextLine: "I'm startin' with the river" });
@@ -266,7 +267,7 @@ test('a word picked from a lyric line resolves its sense from that line and keep
     h.set({ word: 'start', contextIndex: 0, senses: [{ pos: 'v.', meaning: '开始', definition: 'To begin.' }] }, { matchId: found.sense.id, sense: null });
     assert.equal((await h.action({ action: 'passageLookup', passageId: passage.id, line, selection: 'startin' })).collected, true);
 
-    h.set({ word: 'start', contextIndex: 0, senses: [{ pos: 'v.', meaning: '开始', definition: 'To begin.' }] }, { matchId: null, sense: { pos: 'n.', meaning: '惊跳', definition: 'A sudden movement of surprise.' } });
+    h.set({ word: 'start', contextIndex: 0, senses: [{ pos: 'v.', meaning: '开始', definition: 'To begin.' }] }, { matchId: null, sense: { pos: 'n.', meaning: '惊跳', definition: 'A sudden movement of surprise.', frequency: 2 } });
     const fresh = await h.action({ action: 'passageLookup', passageId: passage.id, line, selection: 'startin' });
     assert.equal(fresh.sense.meaning, '惊跳'); assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM senses WHERE word='start'").get().n, 3);
   } finally { h.db.close(); }
@@ -292,10 +293,10 @@ test('fixed expressions are marked once per text version and steer the lookup of
     assert.deepEqual(JSON.parse(JSON.stringify(marked.phrases)), [{ line: 'I came across a river', text: 'came across', phrase: 'come across' }, { line: 'Now I give it up', text: 'give it up', phrase: 'give up' }]);
     assert.equal(marked.updatedAt, passage.updatedAt);
 
-    h.set({ word: 'come across', contextIndex: 0, senses: [{ pos: 'phr. v.', meaning: '偶然遇见', definition: 'To find or meet by chance.' }] });
+    h.set({ word: 'come across', contextIndex: 0, senses: [{ pos: 'phr. v.', meaning: '偶然遇见', definition: 'To find or meet by chance.', frequency: 4 }] });
     const found = await h.action({ action: 'passageLookup', passageId: passage.id, line: 'I came across a river', selection: 'came across' });
     assert.equal(found.sense.word, 'come across'); assert.equal(h.calls[1].data.phrase, 'come across');
-    h.set({ word: 'river', contextIndex: 0, senses: [{ pos: 'n.', meaning: '河', definition: 'A large stream of water.' }] });
+    h.set({ word: 'river', contextIndex: 0, senses: [{ pos: 'n.', meaning: '河', definition: 'A large stream of water.', frequency: 4 }] });
     await h.action({ action: 'passageLookup', passageId: passage.id, line: 'I came across a river', selection: 'river' });
     assert.equal(h.calls[2].data.phrase, undefined);
 
@@ -329,5 +330,80 @@ test('pasted text can be put one sentence per line without changing a word', asy
     assert.equal(plain.passage.text, pasted); assert.equal(plain.lines, undefined); assert.equal(h.calls.length, calls);
     h.set({ lines: pasted.split('\n') });
     assert.equal((await h.action({ action: 'passageSave', passageId: plain.passage.id, title: 'Plain', text: pasted, splitLines: true })).lines, 'unchanged');
+  } finally { h.db.close(); }
+});
+
+test('looked-up meanings carry how common they are, and unrated ones are rated once', async () => {
+  const h = await harness();
+  try {
+    h.set({ senses: [{ pos: 'n.', meaning: '银行', definition: 'A place that keeps money.', frequency: 5 }, { pos: 'n.', meaning: '河岸', definition: 'The side of a river.', frequency: '3' }, { pos: 'v.', meaning: '倾斜转弯', definition: 'To tilt while turning.', frequency: 9 }] }, { ratings: [{ id: 'unknown', frequency: 4 }] });
+    const first = await h.action({ action: 'lookup', word: 'Bank' });
+    assert.match(h.calls[0].instruction, /most to the least common/); assert.match(h.calls[0].instruction, /"frequency"/);
+    // The out-of-range rating is asked again and stays unrated when the answer does not fit.
+    assert.deepEqual(first.senses.map(s => s.frequency), [5, 3, 0]);
+    assert.deepEqual(JSON.parse(JSON.stringify(h.calls[1].data.senses.map(s => s.id))), [first.senses[2].id]);
+    assert.deepEqual(h.db.prepare("SELECT frequency FROM senses WHERE word='bank' ORDER BY created_at").all().map(r => r.frequency), [5, 3, 0]);
+
+    h.set({ ratings: [{ id: first.senses[2].id, frequency: 2 }, { id: first.senses[0].id, frequency: 1 }] });
+    const again = await h.action({ action: 'lookup', word: 'bank' });
+    assert.deepEqual(again.senses.map(s => s.frequency), [5, 3, 2]);
+    assert.equal(h.calls.length, 3);
+    await h.action({ action: 'lookup', word: 'bank' });
+    assert.equal(h.calls.length, 3);
+  } finally { h.db.close(); }
+});
+
+test('meanings saved before frequencies existed are rated in batches', async () => {
+  const h = await harness();
+  try {
+    const insert = h.db.prepare("INSERT INTO senses(id,user_id,word,phonetic,pos,meaning,definition,learned,mastery,review_count,materials,created_at,updated_at) VALUES(?,?,?,'','n.','义','Meaning.',?,0,0,'[]',?,1)");
+    for (let i = 0; i < 41; i++) insert.run(`old-${i}`, 'tester', `word${i}`, 1, 10 + i);
+    insert.run('not-learned', 'tester', 'other', 0, 100); insert.run('theirs', 'someone-else', 'other', 1, 100);
+    h.set({ ratings: [{ id: 'sense-a', frequency: 3 }, ...Array.from({ length: 39 }, (_, i) => ({ id: `old-${i}`, frequency: 4 })), { id: 'theirs', frequency: 5 }] });
+    const first = await h.action({ action: 'senseFrequency' });
+    assert.equal(h.calls[0].data.senses.length, 40); assert.equal(first.done, false); assert.equal(first.senses.length, 40);
+    assert.equal(h.db.prepare("SELECT frequency FROM senses WHERE id='sense-a'").get().frequency, 3);
+    assert.equal(h.db.prepare("SELECT frequency FROM senses WHERE id='theirs'").get().frequency, 0);
+    h.set({ ratings: [{ id: 'old-39', frequency: 2 }, { id: 'old-40', frequency: 1 }] });
+    const second = await h.action({ action: 'senseFrequency' });
+    assert.equal(second.done, true); assert.deepEqual(second.senses.map(s => s.frequency), [2, 1]);
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM senses WHERE user_id='tester' AND learned=1 AND frequency=0").get().n, 0);
+    assert.equal(h.db.prepare("SELECT frequency FROM senses WHERE id='not-learned'").get().frequency, 0);
+    const calls = h.calls.length;
+    assert.deepEqual(JSON.parse(JSON.stringify(await h.action({ action: 'senseFrequency' }))), { senses: [], done: true });
+    assert.equal(h.calls.length, calls);
+  } finally { h.db.close(); }
+});
+
+test('deleting some meanings keeps them for the next lookup; deleting the last one removes the word', async () => {
+  const h = await harness();
+  try {
+    h.set({ senses: [{ pos: 'n.', meaning: '银行', definition: 'A place that keeps money.', frequency: 5 }, { pos: 'n.', meaning: '河岸', definition: 'The side of a river.', frequency: 3 }, { pos: 'v.', meaning: '倾斜转弯', definition: 'To tilt while turning.', frequency: 1 }] });
+    const [money, river] = (await h.action({ action: 'lookup', word: 'bank' })).senses;
+    const picture = { id: 'p', kind: 'example', text: 'The bank opens at nine.', scene: { title: 't', description: 'd', objectKey: 'images/bank' } };
+    h.db.prepare("UPDATE senses SET learned=1,mastery=40,review_count=2,materials=? WHERE word='bank' AND id IN (?,?)").run(JSON.stringify([picture]), money.id, river.id);
+    h.db.prepare("INSERT INTO exercises(id,user_id,sense_id,kind,stage,data,created_at,updated_at) VALUES('ex-money','tester',?,'review','blank','{}',1,1),('ex-river','tester',?,'review','blank','{}',1,1)").run(money.id, river.id);
+    await h.env.BUCKET.put('images/bank', new Uint8Array([1]), {});
+
+    await assert.rejects(h.action({ action: 'senseDelete', senseIds: [] }), e => e.code === 'INVALID_INPUT');
+    await assert.rejects(h.action({ action: 'senseDelete', senseIds: [money.id, 'sense-a'] }), e => e.code === 'INVALID_INPUT');
+    h.db.prepare("INSERT INTO senses(id,user_id,word,phonetic,pos,meaning,definition,learned,mastery,review_count,materials,created_at,updated_at) VALUES('theirs','someone-else','bank','','n.','银行','Bank.',1,0,0,'[]',1,1)").run();
+    await assert.rejects(h.action({ action: 'senseDelete', senseIds: ['theirs'] }), e => e.code === 'NOT_FOUND');
+
+    const partial = await h.action({ action: 'senseDelete', senseIds: [money.id] });
+    assert.equal(partial.whole, false);
+    const reset = h.db.prepare('SELECT learned,mastery,review_count,materials,frequency FROM senses WHERE id=?').get(money.id);
+    assert.deepEqual({ ...reset }, { learned: 0, mastery: 0, review_count: 0, materials: '[]', frequency: 5 });
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM exercises WHERE id='ex-money'").get().n, 0);
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM exercises WHERE id='ex-river'").get().n, 1);
+    assert.equal((await h.action({ action: 'lookup', word: 'bank' })).senses.length, 3);
+
+    const whole = await h.action({ action: 'senseDelete', senseIds: [river.id] });
+    assert.equal(whole.whole, true); assert.equal(whole.word, 'bank');
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM senses WHERE user_id='tester' AND word='bank'").get().n, 0);
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM senses WHERE id='theirs'").get().n, 1);
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM exercises").get().n, 0);
+    assert.equal(h.audio.has('images/bank'), false);
+    assert.equal(h.db.prepare("SELECT COUNT(*) AS n FROM senses WHERE id='sense-a'").get().n, 1);
   } finally { h.db.close(); }
 });

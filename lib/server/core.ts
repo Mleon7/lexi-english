@@ -7,7 +7,7 @@ export type Material = {
   scene?: { title: string; description: string; imageUrl?: string; objectKey?: string; mimeType?: string; model?: string; emoji?: string; background?: string; foreground?: string };
 };
 export type Sense = {
-  id: string; word: string; phonetic: string; pos: string; meaning: string; definition: string;
+  id: string; word: string; phonetic: string; pos: string; meaning: string; definition: string; frequency: number;
   learned: boolean; mastery: number; reviewCount: number; createdAt: number; materials: Material[];
 };
 export type Passage = { id: string; title: string; author: string; text: string; phrases: PassagePhrase[] | null; createdAt: number; updatedAt: number };

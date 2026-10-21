@@ -1,0 +1,1 @@
+ALTER TABLE `senses` ADD `frequency` integer DEFAULT 0 NOT NULL;

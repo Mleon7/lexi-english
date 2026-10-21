@@ -22,6 +22,13 @@
       "when": 1792514181134,
       "tag": "0002_passage_phrases",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792585102987,
+      "tag": "0003_sense_frequency",
+      "breakpoints": true
     }
   ]
 }

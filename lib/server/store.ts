@@ -10,10 +10,10 @@ export function bucket(): R2Bucket {
   if (!env.BUCKET) throw new AppError("Media storage is not ready yet. Please try again later.", 503, "MEDIA_STORAGE_UNAVAILABLE");
   return env.BUCKET;
 }
-export type SenseRow = { id: string; user_id: string; word: string; phonetic: string; pos: string; meaning: string; definition: string; learned: number; mastery: number; review_count: number; materials: string; created_at: number; updated_at: number };
+export type SenseRow = { id: string; user_id: string; word: string; phonetic: string; pos: string; meaning: string; definition: string; frequency: number; learned: number; mastery: number; review_count: number; materials: string; created_at: number; updated_at: number };
 export type ExerciseRow = { id: string; user_id: string; sense_id: string; kind: string; stage: string; data: string; created_at: number; updated_at: number };
 export function publicSense(row: SenseRow): Sense {
-  return { id: row.id, word: row.word, phonetic: row.phonetic, pos: row.pos, meaning: row.meaning, definition: row.definition, learned: !!row.learned, mastery: row.mastery, reviewCount: row.review_count, createdAt: row.created_at, materials: JSON.parse(row.materials) };
+  return { id: row.id, word: row.word, phonetic: row.phonetic, pos: row.pos, meaning: row.meaning, definition: row.definition, frequency: row.frequency, learned: !!row.learned, mastery: row.mastery, reviewCount: row.review_count, createdAt: row.created_at, materials: JSON.parse(row.materials) };
 }
 export async function getSense(userId: string, id: string): Promise<SenseRow> {
   const row = await database().prepare("SELECT * FROM senses WHERE id = ? AND user_id = ?").bind(id, userId).first<SenseRow>();

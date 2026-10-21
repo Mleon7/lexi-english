@@ -112,3 +112,15 @@
 @media(max-width:480px){.scene-header{flex-wrap:wrap;gap:12px}.scene-header .word-title-row h1{font-size:30px;letter-spacing:-.5px}.passage-text{font-size:15px}.cloze-text{line-height:2.3}.cloze-toolbar>.text-button{margin-left:0}}
 @media(max-width:480px){.brand{white-space:nowrap;flex-shrink:0}.main-nav{gap:12px}}
 @media(max-width:420px){.main-nav>button>svg{display:none}}
+
+/* Word book: how common a meaning is, sorting, and deleting words. */
+.frequency-tag{display:inline-flex;align-items:center;gap:6px;font-size:11px;line-height:1.5;color:#9a8a68;white-space:nowrap}.frequency-tag.level-4,.frequency-tag.level-5{color:#5d7a4a}.frequency-tag.level-3{color:#7f8e72}
+.frequency-bars{display:inline-flex;align-items:flex-end;gap:2px;height:11px}.frequency-bars>i{width:3px;border-radius:1px;background:#dfe5d6}.frequency-bars>i:nth-child(1){height:4px}.frequency-bars>i:nth-child(2){height:6px}.frequency-bars>i:nth-child(3){height:8px}.frequency-bars>i:nth-child(4){height:9.5px}.frequency-bars>i:nth-child(5){height:11px}.frequency-bars>i.on{background:currentColor}
+.sense-choice em .frequency-tag{font-size:11px}
+.word-sort{display:flex;gap:2px;padding:2px;margin:-2px 0 12px;background:#e3e9d9;border-radius:6px}.word-sort>button{flex:1;padding:4px 0;font-size:11px;color:#7f8e72;border-radius:4px}.word-sort>button:hover{color:#425936}.word-sort>button.active{background:#fafbf4;color:#425936;box-shadow:0 1px 2px #566c4220}
+.word-letter{font-family:var(--serif);font-size:13px;color:#9aa78c;padding:4px 12px 4px;letter-spacing:1px}
+.word-group{position:relative}.word-item{padding-right:40px}
+.word-delete{position:absolute;right:8px;top:13px;width:28px;height:28px;color:#b0a088;visibility:hidden}.word-group:hover .word-delete,.word-group:focus-within .word-delete,.word-group.selected .word-delete{visibility:visible}.word-delete:hover{color:#a3593a;background:#f3e9dc}
+.primary-button.danger-button{background:#a3593a}.primary-button.danger-button:hover:not(:disabled){background:#8a4a30}
+.delete-choices{margin-top:0}.delete-choices .radio-indicator{border-radius:5px}.delete-choices .sense-choice.active{background:#fbf4ee;border-color:#e2c6ae}.delete-choices .sense-choice.active .radio-indicator{background:#a3593a;border-color:#a3593a}
+@media(max-width:760px){.frequency-tag{font-size:12px}.word-sort>button{font-size:12px}}

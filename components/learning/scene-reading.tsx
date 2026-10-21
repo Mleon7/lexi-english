@@ -5,7 +5,7 @@ import { ArrowRight, BookOpen, CheckCheck, Info, Languages, LoaderCircle, Plus, 
 import { parsePassage, phraseSpans, type PassageLine } from "@/lib/cloze";
 import { type Passage, type Sense, type Notify } from "./types";
 import { ApiError, request } from "./api";
-import { Highlight, Loading, Tip } from "./shared";
+import { Frequency, Highlight, Loading, Tip } from "./shared";
 
 type Pick = { line: number; selection: string };
 type Lookup = Pick & { status: "loading" | "ready" | "error"; sense?: Sense; collected?: boolean; error?: string };
@@ -119,7 +119,7 @@ export function PassageReading({ passage, phraseError, onRetryPhrases, onSense, 
           {sense && <>
             <div className="lookup-word"><h3>{sense.word}</h3>{sense.phonetic && <span className="word-pronunciation">{sense.phonetic}</span>}</div>
             {lookup.selection.toLowerCase() !== sense.word && <p className="lookup-origin">In the text: <em>{lookup.selection}</em></p>}
-            <div className="word-meaning"><span className="pos-tag">{sense.pos}</span><Tip label="Chinese meaning" icon={<Languages size={14} />}><span className="translation-content">{sense.meaning}</span></Tip></div>
+            <div className="word-meaning"><span className="pos-tag">{sense.pos}</span><Frequency level={sense.frequency} /><Tip label="Chinese meaning" icon={<Languages size={14} />}><span className="translation-content">{sense.meaning}</span></Tip></div>
             <p className="lookup-definition">{sense.definition}</p>
             <blockquote className="lookup-line"><Quote size={12} /><span><Highlight text={lines[lookup.line].text} word={lookup.selection} /></span></blockquote>
             <div className="lookup-actions">

@@ -8,6 +8,8 @@ export const senses = sqliteTable("senses", {
   pos: text("pos").notNull(),
   meaning: text("meaning").notNull(),
   definition: text("definition").notNull(),
+  // How often the word is met in this meaning, 1 (rare) to 5 (very common); 0 until rated.
+  frequency: integer("frequency").notNull().default(0),
   learned: integer("learned", { mode: "boolean" }).notNull().default(false),
   mastery: integer("mastery").notNull().default(0),
   reviewCount: integer("review_count").notNull().default(0),

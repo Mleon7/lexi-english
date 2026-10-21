@@ -24,6 +24,22 @@ export function Modal({ title, subtitle, children, close, wide = false }: { titl
   return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}><div className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title} ref={ref}><button className="icon-button modal-close" onClick={close} aria-label="Close"><X size={20} /></button><div className="modal-title-icon"><Sprout size={24} /></div><h2>{title}</h2>{subtitle && <p className="muted modal-subtitle">{subtitle}</p>}{children}</div></div>;
 }
 
+const FREQUENCY = [
+  { label: "Not rated yet", note: "" },
+  { label: "Rare", note: "beyond the 20,000 most used meanings, or dated, literary, technical. Fine to leave for later." },
+  { label: "Uncommon", note: "within the 20,000 most used meanings (about C2)." },
+  { label: "Occasional", note: "within the 10,000 most used meanings (about C1)." },
+  { label: "Common", note: "within the 5,000 most used meanings (about B1–B2). Worth knowing well." },
+  { label: "Very common", note: "among the 2,000 most used meanings (about A1–A2). Learn it first." },
+];
+
+// How often the word is met in this meaning, from 1 (rare) to 5 (very common).
+export function Frequency({ level }: { level: number }) {
+  if (!level) return null;
+  const { label, note } = FREQUENCY[level];
+  return <span className={`frequency-tag level-${level}`} title={`${label}: ${note}`} aria-label={`Frequency of this meaning: ${label}, ${level} of 5`}><span className="frequency-bars" aria-hidden="true">{[1, 2, 3, 4, 5].map(step => <i key={step} className={step <= level ? "on" : undefined} />)}</span>{label}</span>;
+}
+
 export function Collected() { return <span className="collected-note"><BookmarkCheck size={12} />Saved to your examples</span>; }
 
 export function FeedbackCard({ feedback, collected = false }: { feedback: Feedback; collected?: boolean }) { return <div className={`feedback-card ${feedback.appropriate ? "good" : "improve"}`} role="status"><div className="feedback-heading"><span>{feedback.appropriate ? <CheckCheck size={20} /> : <Sprout size={20} />}</span><h3>{feedback.appropriate ? "Well used" : "A little closer to the situation"}</h3><b>{feedback.score}<small> / 100</small></b></div><div className="feedback-part"><span className="eyebrow">Does it fit the situation?</span><p>{feedback.scenarioFeedback}</p></div><div className="feedback-part"><span className="eyebrow">Making it more natural</span><p>{feedback.grammarFeedback}</p></div>{feedback.improvedSentence && <div className="improved-sentence"><span>You could say</span><p>{feedback.improvedSentence}</p>{collected && <Collected />}</div>}</div>; }

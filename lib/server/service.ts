@@ -7,16 +7,40 @@ import { isSectionLine, parsePassage, phraseSpans, rebreakLines, type PassagePhr
 
 const kinds: MaterialKind[] = ["description", "example", "synonym", "antonym"];
 const WORD_OR_PHRASE = /^[a-z]+(?:[ '\-][a-z]+)*$/i;
-const senseShape = '{"phonetic":"IPA","pos":"part of speech abbreviation","meaning":"concise Chinese meaning","definition":"clear short English definition"}';
+// Frequency rates the word in this meaning across English, not against its other
+// meanings, so the learner can tell how much it is worth learning.
+const frequencyShape = "integer 1-5, how often a learner meets this word used in this meaning in modern English, as if each meaning were ranked in a frequency list: 5 very common, among the 2,000 most used (CEFR A1-A2); 4 common, within the top 5,000 (B1-B2); 3 occasional, within the top 10,000 (C1); 2 uncommon, within the top 20,000 (C2); 1 rare, beyond that, dated, literary or technical. Be strict: most meanings a learner looks up are 3 or below";
+const senseShape = `{"phonetic":"IPA","pos":"part of speech abbreviation","meaning":"concise Chinese meaning","definition":"clear short English definition","frequency":"${frequencyShape}"}`;
 function context(sense: Sense) { return { word: sense.word, pos: sense.pos, meaning: sense.meaning, definition: sense.definition }; }
+// A missing or invalid rating is left at 0 and rated again later instead of failing the lookup.
+function frequency(value: unknown) { const level = Number(value); return Number.isInteger(level) && level >= 1 && level <= 5 ? level : 0; }
 function senseFields(value: unknown) {
   const item = record(value);
-  return { phonetic: typeof item.phonetic === "string" ? item.phonetic.slice(0, 100) : "", pos: modelText(item.pos, 60), meaning: modelText(item.meaning, 300), definition: modelText(item.definition, 700) };
+  return { phonetic: typeof item.phonetic === "string" ? item.phonetic.slice(0, 100) : "", pos: modelText(item.pos, 60), meaning: modelText(item.meaning, 300), definition: modelText(item.definition, 700), frequency: frequency(item.frequency) };
 }
 type NewSense = ReturnType<typeof senseFields> & { id: string; word: string; createdAt: number };
 async function insertSenses(userId: string, rows: NewSense[]) {
   const now = Date.now();
-  await database().batch(rows.map(row => database().prepare("INSERT INTO senses (id,user_id,word,phonetic,pos,meaning,definition,learned,mastery,review_count,materials,created_at,updated_at) VALUES (?,?,?,?,?,?,?,0,0,0,'[]',?,?)").bind(row.id, userId, row.word, row.phonetic, row.pos, row.meaning, row.definition, row.createdAt, now)));
+  await database().batch(rows.map(row => database().prepare("INSERT INTO senses (id,user_id,word,phonetic,pos,meaning,definition,frequency,learned,mastery,review_count,materials,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,0,0,0,'[]',?,?)").bind(row.id, userId, row.word, row.phonetic, row.pos, row.meaning, row.definition, row.frequency, row.createdAt, now)));
+}
+// Meanings saved before frequencies existed, or left unrated, are rated in one call.
+// updated_at is left alone so material updates in flight are not turned away.
+async function rateSenses<T extends Sense | NewSense>(userId: string, config: Settings, senses: T[]): Promise<T[]> {
+  const missing = senses.filter(sense => !sense.frequency);
+  if (!missing.length) return senses;
+  const result = await generate(config, `Rate how often each listed meaning is used. Return {"ratings":[{"id":"id of the meaning","frequency":"${frequencyShape}"}]}. Rate the word in that meaning, not the word as a whole: a rare meaning of a common word is rare.`, { senses: missing.map(sense => ({ id: sense.id, word: sense.word, pos: sense.pos, meaning: sense.meaning, definition: sense.definition })) }, { temperature: 0.2 });
+  const ratings = new Map<string, number>();
+  for (const value of Array.isArray(result.ratings) ? result.ratings : []) {
+    const item = value && typeof value === "object" ? value as Record<string, unknown> : {}, level = frequency(item.frequency);
+    if (level && missing.some(sense => sense.id === item.id)) ratings.set(item.id as string, level);
+  }
+  if (ratings.size) await database().batch([...ratings].map(([id, level]) => database().prepare("UPDATE senses SET frequency=? WHERE id=? AND user_id=? AND frequency=0").bind(level, id, userId)));
+  return senses.map(sense => ratings.has(sense.id) ? { ...sense, frequency: ratings.get(sense.id)! } : sense);
+}
+// Showing a lookup matters more than its rating, which is tried again next time.
+async function rateIfPossible<T extends Sense | NewSense>(userId: string, config: Settings, senses: T[]): Promise<T[]> {
+  try { return await rateSenses(userId, config, senses); }
+  catch (error) { if (error instanceof AppError) return senses; throw error; }
 }
 function material(value: unknown, kind: MaterialKind): Material {
   const item = record(value);
@@ -104,13 +128,13 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
     const word = input(body.word, "Word", 60).toLowerCase();
     if (!WORD_OR_PHRASE.test(word)) throw new AppError("Please enter an English word or phrase.");
     const previous = await database().prepare("SELECT * FROM senses WHERE user_id = ? AND word = ? ORDER BY created_at").bind(userId, word).all<SenseRow>();
-    if (previous.results.length) return { senses: previous.results.map(publicSense) };
-    const result = await generate(config, `For the English word or phrase, list its common DISTINCT meanings, usually 2-6, maximum 8. Do not invent meanings; a monosemous word may have 1. Return {"senses":[${senseShape}]}. If input is not a real English word/phrase, return {"senses":[],"error":"short English explanation"}.`, { word });
+    if (previous.results.length) return { senses: await rateIfPossible(userId, config, previous.results.map(publicSense)) };
+    const result = await generate(config, `For the English word or phrase, list its common DISTINCT meanings, usually 2-6, maximum 8, from the most to the least common. Do not invent meanings; a monosemous word may have 1. Return {"senses":[${senseShape}]}. If input is not a real English word/phrase, return {"senses":[],"error":"short English explanation"}.`, { word });
     if (!Array.isArray(result.senses) || !result.senses.length) throw new AppError("No common English meanings were found. Check the spelling and try again.");
     const now = Date.now();
     const rows = result.senses.slice(0, 8).map((value, index) => ({ id: crypto.randomUUID(), word, ...senseFields(value), createdAt: now + index }));
     await insertSenses(userId, rows);
-    return { senses: rows };
+    return { senses: await rateIfPossible(userId, config, rows) };
   }
 
   if (name === "passageSave") {
@@ -202,11 +226,11 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
       // Reuse a saved meaning when it fits, so the word book never holds duplicates.
       const matched = await generate(config, `The learner already has these senses of word. Decide which one is used in the line. Return {"matchId":"id of the sense used in this line","sense":null}. Only when NO listed sense fits, return {"matchId":null,"sense":${senseShape}} describing the meaning used in this line. A nuance of a listed sense is NOT a new sense.`, { ...source, word, senses: known.map(item => ({ id: item.id, pos: item.pos, meaning: item.meaning, definition: item.definition })) });
       const match = known.find(item => item.id === matched.matchId);
-      if (match) sense = match;
+      if (match) [sense] = await rateIfPossible(userId, config, [match]);
       else {
         const row = { id: crypto.randomUUID(), word, ...senseFields(matched.sense), createdAt: Date.now() };
         await insertSenses(userId, [row]);
-        sense = publicSense(await getSense(userId, row.id));
+        [sense] = await rateIfPossible(userId, config, [publicSense(await getSense(userId, row.id))]);
       }
     } else {
       const contextIndex = Number(found.contextIndex);
@@ -214,9 +238,38 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
       const now = Date.now();
       const rows = found.senses.slice(0, 8).map((value, position) => ({ id: crypto.randomUUID(), word, ...senseFields(value), createdAt: now + position }));
       await insertSenses(userId, rows);
-      sense = publicSense(await getSense(userId, rows[contextIndex].id));
+      [sense] = await rateIfPossible(userId, config, [publicSense(await getSense(userId, rows[contextIndex].id))]);
     }
     return { sense, collected: sense.learned && collected(sense) };
+  }
+
+  if (name === "senseFrequency") {
+    // Rates the word book a batch at a time; the page asks again until it is done.
+    const unrated = await database().prepare("SELECT * FROM senses WHERE user_id = ? AND learned = 1 AND frequency = 0 ORDER BY created_at LIMIT 40").bind(userId).all<SenseRow>();
+    const rated = (await rateSenses(userId, config, unrated.results.map(publicSense))).filter(sense => sense.frequency);
+    return { senses: rated, done: unrated.results.length < 40 };
+  }
+
+  if (name === "senseDelete") {
+    // Removing some meanings of a word keeps them as choices for its next lookup.
+    // Removing the last saved one deletes the word, so a later lookup starts fresh.
+    const ids = Array.isArray(body.senseIds) ? [...new Set(body.senseIds.map(id => input(id, "Meaning ID", 80)))] : [];
+    if (!ids.length || ids.length > 8) throw new AppError("Choose the meanings to delete.");
+    const chosen = await Promise.all(ids.map(id => getSense(userId, id)));
+    const word = chosen[0].word;
+    if (chosen.some(row => row.word !== word)) throw new AppError("Delete the meanings of one word at a time.");
+    const all = (await database().prepare("SELECT * FROM senses WHERE user_id = ? AND word = ?").bind(userId, word).all<SenseRow>()).results;
+    const whole = all.every(row => !row.learned || ids.includes(row.id));
+    const removed = whole ? all : chosen, marks = (rows: unknown[]) => rows.map(() => "?").join(",");
+    await database().batch([
+      database().prepare(`DELETE FROM exercises WHERE user_id = ? AND sense_id IN (${marks(removed)})`).bind(userId, ...removed.map(row => row.id)),
+      whole ? database().prepare("DELETE FROM senses WHERE user_id = ? AND word = ?").bind(userId, word)
+        : database().prepare(`UPDATE senses SET learned = 0, mastery = 0, review_count = 0, materials = '[]', updated_at = MAX(updated_at + 1, ?) WHERE user_id = ? AND id IN (${marks(ids)})`).bind(Date.now(), userId, ...ids),
+    ]);
+    // Pictures belong to the materials that are gone now.
+    const pictures = removed.flatMap(row => publicSense(row).materials.flatMap(item => item.scene?.objectKey ? [item.scene.objectKey] : []));
+    if (pictures.length) await Promise.all(pictures.map(key => bucket().delete(key).catch(() => {})));
+    return { deleted: ids, word, whole };
   }
 
   if (["select", "augment", "translate", "illustrate", "writingScenario", "listeningStart"].includes(name)) {
