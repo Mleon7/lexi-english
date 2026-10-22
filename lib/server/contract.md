@@ -16,7 +16,7 @@ Actions and results:
 - `listeningStart {senseId,materialId}` -> `{sessionId,voices:[{id,label}],submitted:false}`. Starts a fresh attempt while retaining all available voices previously saved for this user's material and text, including added voices. The response has NO original sentence. At least 3 distinct voices selected on server for English synthesis, from the configured provider. Provider-specific voice IDs prevent mixing MiniMax and Qwen sessions.
 - `listeningMore {sessionId}` -> `{voices:[{id,label}]}` (full list).
 - `listeningAudio {sessionId,voiceId}` -> `{url}`. URL points to authenticated `/api/audio?id=...`. Cache in R2 (MiniMax MP3 or Qwen WAV). Voice ids selected server-side. Provider changes require a fresh listening session; old audio URLs remain valid.
-- `listeningSubmit {sessionId,answer}` -> `{score:number,submitted:true}`. Nonempty attempt required; original is only retrieved afterward.
+- `listeningSubmit {sessionId,answer}` -> `{score:number,marks:[{start,end}],submitted:true}`. Nonempty attempt required; original is only retrieved afterward. `marks` are offsets into the trimmed answer: a span is a wrong or extra word, an empty mark (`start===end`) is a missing word, so the original text is never exposed.
 - `listeningHint {sessionId}` -> `{text,translation?}`; rejects before attempt with 403. UI shows returned answer only on hover/focus after submission.
 - `reviewStart {}` -> `{reviewId,scenario,sentence,stage:'blank'}`. Answer and identity of target sense deliberately omitted.
 - `reviewBlank {reviewId,answer}` -> `{correct:false,answer,meaning,feedback}` on failure; or `{correct:true,scenario,word,meaning,stage:'sentence'}` on success. Success gives a NEW scenario to write an original sentence.

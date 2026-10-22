@@ -51,16 +51,31 @@ export function phraseInLine(line: string, phrase: string): boolean {
   const key = (value: string) => normalize(value).replace(/(^|\s)'+|'+(?=\s|$)/g, "$1");
   return !!key(phrase) && ` ${key(line)} `.includes(` ${key(phrase)} `);
 }
-export function dictationScore(answer: string, original: string): number {
-  const a = normalize(answer).split(" ");
-  const b = normalize(original).split(" ");
-  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const current = [i];
-    for (let j = 1; j <= b.length; j++) current[j] = Math.min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    previous = current;
+// Offsets into the learner's own text, so marking mistakes never reveals the original.
+// A wrong or extra word spans start..end; a missing word is an empty mark (start === end) where it belongs.
+export type DictationMark = { start: number; end: number };
+export function dictationCheck(answer: string, original: string): { score: number; marks: DictationMark[] } {
+  const words = (value: string) => [...value.matchAll(/[\p{L}\p{N}'’‘]+/gu)].map(match => ({ start: match.index, end: match.index + match[0].length, key: match[0].toLowerCase().replace(/[’‘]/g, "'") }));
+  const a = words(answer), b = words(original);
+  // Fewest edits first; among equal edits keep the most words matched, so a right word is not marked just to tie.
+  type Step = { edits: number; matches: number; move: "same" | "wrong" | "extra" | "missing" };
+  const best: Step[][] = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => ({ edits: i + j, matches: 0, move: j ? "missing" : "extra" })));
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    const same = a[i - 1].key === b[j - 1].key, diagonal = best[i - 1][j - 1], extra = best[i - 1][j], missing = best[i][j - 1];
+    const options: Step[] = [{ edits: diagonal.edits + (same ? 0 : 1), matches: diagonal.matches + (same ? 1 : 0), move: same ? "same" : "wrong" }, { edits: extra.edits + 1, matches: extra.matches, move: "extra" }, { edits: missing.edits + 1, matches: missing.matches, move: "missing" }];
+    best[i][j] = options.reduce((kept, option) => option.edits < kept.edits || option.edits === kept.edits && option.matches > kept.matches ? option : kept);
   }
-  return Math.max(0, Math.round(100 * (1 - previous[b.length] / Math.max(a.length, b.length))));
+  const marks: DictationMark[] = [];
+  for (let i = a.length, j = b.length; i > 0 || j > 0;) {
+    const { move } = best[i][j];
+    if (move === "missing") { const at = i > 0 ? a[i - 1].end : a[0]?.start ?? 0; marks.push({ start: at, end: at }); j--; continue; }
+    if (move !== "same") marks.push({ start: a[i - 1].start, end: a[i - 1].end });
+    i--; if (move !== "extra") j--;
+  }
+  return { score: Math.round(100 * (1 - best[a.length][b.length].edits / Math.max(a.length, b.length, 1))), marks: marks.reverse() };
+}
+export function dictationScore(answer: string, original: string): number {
+  return dictationCheck(answer, original).score;
 }
 export function reviewWeight(mastery: number): number { return Math.max(0.08, Math.pow(1 - Math.min(100, Math.max(0, mastery)) / 100, 2)); }
 export function chooseWeighted<T extends { mastery: number }>(items: T[], random = Math.random()): T {

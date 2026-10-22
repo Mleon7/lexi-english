@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AppError, chooseWeighted, dictationScore, isCopied, reviewWeight } from "../lib/server/core.ts";
+import { AppError, chooseWeighted, dictationCheck, dictationScore, isCopied, reviewWeight } from "../lib/server/core.ts";
 
 test("dictation accepts capitalization, spacing, punctuation, and curly apostrophes", () => {
   assert.equal(dictationScore("  DON'T lose   your focus! ", "Don’t lose your focus."), 100);
@@ -12,6 +12,18 @@ test("dictation reports missing and substituted words without exposing answer te
   assert.equal(dictationScore("Please really keep your focus", "Please keep your focus."), 80);
   assert.equal(dictationScore("", "Please keep your focus."), 0);
   assert.equal(dictationScore("Completely unrelated words here", "Please keep your focus."), 0);
+});
+
+test("dictation marks wrong, extra, and missing words inside the learner's own text", () => {
+  const marked = (answer, original) => dictationCheck(answer, original).marks.map(({ start, end }) => start === end ? `^${start}` : answer.slice(start, end));
+  assert.deepEqual(marked("  DON'T lose your Focus! ", "Don’t lose your focus."), []);
+  assert.deepEqual(marked("Please keep my focus", "Please keep your focus."), ["my"]);
+  assert.deepEqual(marked("Please really keep your focus", "Please keep your focus."), ["really"]);
+  assert.deepEqual(marked("Please keep your.", "Please keep your focus."), ["^16"]);
+  assert.deepEqual(marked("keep your focus", "Please keep your focus."), ["^0"]);
+  assert.deepEqual(marked("Please my", "Please keep your focus."), ["^6", "^6", "my"]);
+  assert.deepEqual(marked("Please really keep my.", "Please keep your focus."), ["really", "^18", "my"]);
+  assert.equal(dictationCheck("Please keep my focus", "Please keep your focus.").score, 75);
 });
 
 test("successful mastery lowers sampling weight while learned meanings stay eligible", () => {

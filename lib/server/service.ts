@@ -1,5 +1,5 @@
 import { illustrate } from "./illustration";
-import { AppError, input, record, modelText, normalize, dictationScore, chooseWeighted, isCopied, shuffled, validateFeedback, passageText, phraseInLine, type Material, type MaterialKind, type Sense, type Settings } from "./core";
+import { AppError, input, record, modelText, normalize, dictationCheck, chooseWeighted, isCopied, shuffled, validateFeedback, passageText, phraseInLine, type Material, type MaterialKind, type Sense, type Settings } from "./core";
 import { generate, speech, speechVoices } from "./providers";
 import { speechConfiguration } from "./speech-config";
 import { database, bucket, settings, getSense, listSenses, publicSense, exercise, createExercise, updateMaterials, getPassage, publicPassage, type SenseRow, type ExerciseRow } from "./store";
@@ -371,10 +371,10 @@ export async function action(userId: string, body: Record<string, unknown>): Pro
       const answer = input(body.answer, "Your dictation", 1500);
       if (!/[a-z]/i.test(answer)) throw new AppError("Write what you heard in English first, then check the original.");
       requireStage(row, "listening");
-      const score = dictationScore(answer, modelText(stored.text));
+      const { score, marks } = dictationCheck(answer, modelText(stored.text));
       const saved = await database().prepare("UPDATE exercises SET stage='submitted',data=json_set(data,'$.answer',?,'$.score',?),updated_at=? WHERE id=? AND user_id=? AND stage='listening'").bind(answer, score, Date.now(), row.id, userId).run();
       if (!saved.meta.changes) throw new AppError("The dictation is already submitted. Hover to check the original.", 409, "ALREADY_SUBMITTED");
-      return { score, submitted: true };
+      return { score, marks, submitted: true };
     }
     if (row.stage !== "submitted") throw new AppError("Submit your dictation first; then you can hover to see the original.", 403, "DICTATION_REQUIRED");
     return { text: stored.text, ...(stored.translation ? { translation: stored.translation } : {}) };
